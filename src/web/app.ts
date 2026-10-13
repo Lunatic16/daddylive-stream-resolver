@@ -492,19 +492,62 @@ const selectServer = async (server: ServerKind) => {
   }
 };
 
+// navigator.clipboard is undefined on insecure origins (a phone hitting this
+// over http://lan-ip:3000), and some mobile browsers reject it even when
+// present — the execCommand fallback keeps copy working inside the click gesture.
+const copyText = async (text: string) => {
+  if (window.isSecureContext && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // fall through to the synchronous fallback
+    }
+  }
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "");
+  ta.style.position = "fixed";
+  ta.style.top = "0";
+  ta.style.left = "-9999px";
+  ta.style.fontSize = "16px";
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  ta.setSelectionRange(0, text.length);
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } finally {
+    ta.remove();
+  }
+  if (!copied) throw new Error("copy failed");
+};
+
+const flashButton = (btn: HTMLButtonElement, text: string, cls: "ok" | "err") => {
+  const label = btn.textContent;
+  btn.textContent = text;
+  btn.classList.add(cls);
+  setTimeout(() => {
+    btn.textContent = label;
+    btn.classList.remove(cls);
+  }, 1200);
+};
+
 document.querySelectorAll<HTMLButtonElement>("[data-copy]").forEach((btn) => {
   btn.addEventListener("click", async () => {
     const id = btn.dataset.copy;
     const input = id ? $<HTMLInputElement>(id) : null;
     if (!input?.value) return;
-    await navigator.clipboard.writeText(input.value);
-    const label = btn.textContent;
-    btn.textContent = "Copied";
-    btn.classList.add("ok");
-    setTimeout(() => {
-      btn.textContent = label;
-      btn.classList.remove("ok");
-    }, 1200);
+    try {
+      await copyText(input.value);
+      flashButton(btn, "Copied", "ok");
+    } catch {
+      // last resort: select the field so a long-press → Copy still works
+      input.focus();
+      input.select();
+      flashButton(btn, "Copy failed", "err");
+    }
   });
 });
 
@@ -652,18 +695,15 @@ document.addEventListener("click", (event) => {
 });
 
 ui.btnCopyM3u8?.addEventListener("click", async () => {
+  const btn = ui.btnCopyM3u8;
+  if (!btn) return;
   const m3u8Url = `${window.location.origin}/api/channels.m3u8`;
-  await navigator.clipboard.writeText(m3u8Url);
-  if (!ui.btnCopyM3u8) return;
-  const label = ui.btnCopyM3u8.textContent;
-  ui.btnCopyM3u8.textContent = "Copied URL";
-  ui.btnCopyM3u8.classList.add("ok");
-  setTimeout(() => {
-    if (ui.btnCopyM3u8) {
-      ui.btnCopyM3u8.textContent = label;
-      ui.btnCopyM3u8.classList.remove("ok");
-    }
-  }, 1200);
+  try {
+    await copyText(m3u8Url);
+    flashButton(btn, "Copied URL", "ok");
+  } catch {
+    flashButton(btn, "Copy failed", "err");
+  }
 });
 
 ui.btnBrowseChannels?.addEventListener("click", () => {

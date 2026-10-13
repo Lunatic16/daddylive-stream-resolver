@@ -406,6 +406,11 @@ button.ok {
   border-color: rgba(107, 203, 119, 0.45);
 }
 
+button.err {
+  color: var(--err);
+  border-color: rgba(240, 113, 120, 0.45);
+}
+
 .msg--err {
   margin: 12px 0 0;
   font-size: 0.88rem;
