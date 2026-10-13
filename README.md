@@ -15,7 +15,7 @@ keeps working after the raw CDN URL expires.
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](#-contributing)
 [![License](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
 
-[Features](#-features) · [Quick Start](#-quick-start) · [Docker](#-docker) · [Usage](#-usage) · [Players](#-players) · [How It Works](#-how-it-works) · [API](#-http-api) · [Disclaimer](#-disclaimer)
+[Features](#-features) · [Quick Start](#-quick-start) · [Docker](#-docker) · [Usage](#-usage) · [IPTV Playlist](#-iptv-playlist) · [Players](#-players) · [How It Works](#-how-it-works) · [API](#-http-api) · [Disclaimer](#-disclaimer)
 
 <p><img src="docs/screenshot.png" alt="App screenshot" width="800" /></p>
 
@@ -32,6 +32,7 @@ keeps working after the raw CDN URL expires.
 - 🚰 **Smart proxy** — rewrites playlists and unwraps WebP / PNG polyglot segments into MPEG-TS on the fly
 - 💾 **Session cache** — one in-memory entry per `channel:server`; no repeat upstream fetches while the signed URL is valid
 - 📋 **One-click export** — VLC and MPV shell commands with the correct flags per server
+- 📡 **IPTV playlist export** — an M3U8 playlist of every channel for VLC, TiviMate and similar apps, grouped by content type and region with English-speaking groups first
 - 📦 **Library mode** — import `resolveFromHtml`, `buildVlcCommand`, and friends from `daddylive-stream-resolver`
 - 🧱 **Zero runtime dependencies** — TypeScript and `@types/node` are devDependencies only
 
@@ -111,6 +112,54 @@ After a successful resolve, the export card shows four fields:
 
 > [!TIP]
 > Which URL each tool line uses depends on the server profile — VLC and MPV can differ (direct vs Our Live URL) when one player demuxes the CDN and the other does not. For long sessions and sharing, prefer **Our Live URL**.
+
+## 📡 IPTV Playlist
+
+The resolver can generate an `.m3u8` playlist of every channel in `channels.json`, ready for IPTV apps such as VLC or TiviMate. Each entry points back at this host, so it plays through the same live sessions and proxy as the web UI:
+
+```text
+#EXTM3U
+#EXTINF:-1 tvg-id="44" tvg-name="ESPN USA" group-title="Sports - USA",ESPN USA
+http://localhost:3000/api/stream/44.m3u8
+```
+
+Add `?server={kind}` to the stream URLs to pick a [player](#-players) (see `server` in [`/api/resolve`](#get-apiresolvechannelidserverkind)). Quotes in channel names are replaced so the attributes stay valid.
+
+### Categories
+
+Every channel gets a `group-title` from its name: a content type first, then a region where grouping by country helps.
+
+| Type | Groups |
+| --- | --- |
+| **Sports** | By region (`Sports - UK & Ireland`, `Sports - Germany & Austria`, …), plus `Sports - USA Regional` and global sport groups: Cricket, Motorsport, Tennis, Golf, Combat & Wrestling, Horse Racing, Club TV |
+| **Entertainment** | `Entertainment - USA Broadcast`, `Entertainment - USA Cable`, then by region; small regions fold into `Entertainment - Other` |
+| **Movies** | `Movies - USA`, `Movies - UK & Ireland`, `Movies - Italy`, `Movies - Poland`; the rest go to `Movies - International` |
+| **Global groups** | `News & Weather`, `Kids`, `Documentary & Lifestyle`, `Music` |
+| **Special** | `Live Cams - Big Brother`, `18+ Adult` |
+
+### Order
+
+The playlist is sorted so English-speaking content comes first:
+
+1. **English-speaking regions** — USA, then UK & Ireland, Canada, Australia & NZ (Sports, then Entertainment, then Movies within each)
+2. **Global groups** — sport-specific groups, News & Weather, Kids, Documentary & Lifestyle, Music
+3. **Other regions** — everything else, grouped by language/region
+4. **Live Cams**, then **18+ Adult** last
+
+Channels inside a group use natural numeric order (`Sport 2` before `Sport 10`).
+
+### Customising
+
+Classification lives in `m3u8.ts` and is all regular expressions plus a few lists:
+
+| To change | Edit |
+| --- | --- |
+| Which region a channel belongs to | `REGION_RULES` (first match wins) |
+| Content type (sport, news, kids, …) | The pattern constants such as `SPORT_GENERAL`, `NEWS`, `KIDS`, `MOVIES` |
+| Which small regions get their own Movies / Entertainment group | `MOVIE_REGIONS`, `ENTERTAINMENT_REGIONS` |
+| Playlist order | `ENGLISH_REGIONS`, `NON_ENGLISH_REGIONS`, `GROUP_ORDER` |
+
+Anything unmatched falls back to `Entertainment - USA Cable`, so add a rule when a new channel lands in the wrong group.
 
 ## 📺 Players
 
@@ -250,6 +299,10 @@ Resolves one player through the live session (cache hit when the signed URL is s
 ### `GET /api/live?channel={id}&server={kind}`
 
 Stable HLS playlist for the browser (and for tools when the profile is not direct-playable). Optional `u` and `v` query params follow rewritten child playlists and variants. Reuses or refreshes the same session as `/api/resolve`, and unwraps segments when they arrive as WebP-wrapped MPEG-TS.
+
+### `GET /api/stream/{id}.m3u8?server={kind}`
+
+Per-channel stream URL used by the [IPTV playlist](#-iptv-playlist). `server` is optional.
 
 ### `GET /api/proxy?url={upstream}&referer={embed}`
 
