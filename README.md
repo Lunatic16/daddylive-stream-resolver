@@ -15,7 +15,7 @@ keeps working after the raw CDN URL expires.
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](#-contributing)
 [![License](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
 
-[Features](#-features) · [Quick Start](#-quick-start) · [Usage](#-usage) · [Players](#-players) · [How It Works](#-how-it-works) · [API](#-http-api) · [Disclaimer](#-disclaimer)
+[Features](#-features) · [Quick Start](#-quick-start) · [Docker](#-docker) · [Usage](#-usage) · [Players](#-players) · [How It Works](#-how-it-works) · [API](#-http-api) · [Disclaimer](#-disclaimer)
 
 <p><img src="docs/screenshot.png" alt="App screenshot" width="800" /></p>
 
@@ -60,6 +60,29 @@ Open **http://localhost:3000**. Set `PORT` if you need another port.
 | `npm run typecheck` | `tsc --noEmit` |
 
 `npm start` rebuilds TypeScript into `dist/` and serves the API plus the web UI from there.
+
+## 🐳 Docker
+
+You can run the resolver in a container with Docker Compose or the Docker CLI.
+
+### Using Docker Compose (Recommended)
+
+A multi-stage `Dockerfile` and `docker-compose.yaml` ship with the repo — no local Node toolchain needed.
+
+```bash
+docker compose up -d --build
+```
+
+Open **http://localhost:3000** (change the left side of `ports:` in `docker-compose.yaml` to move it).
+
+What the image does:
+
+- **Build stage** — `npm ci` + `npm run build` on `node:22-alpine`, with the npm cache mounted.
+- **Runtime stage** — only `dist/` and `package.json` (zero runtime deps means no `node_modules` ship); runs as the non-root `node` user with a `HEALTHCHECK` polling `/`.
+- **Configuration** — `PORT` (default `3000`) and `DLHD_BASE` pass through as environment variables; see [Configuration](#%EF%B8%8F-configuration).
+- **`restart: unless-stopped`** — the container comes back after reboots and crashes.
+
+The container bypasses the `lsof`/`kill` port-clearing in `npm start` (a host dev convenience) and runs `node dist/api/index.js` directly. Logs: `docker logs -f daddylive`.
 
 ## 🎮 Usage
 
@@ -312,7 +335,7 @@ Build output goes to `dist/`.
 | Piece | Choice |
 | --- | --- |
 | Language | TypeScript (ESM, strict, small modules) |
-| Runtime | Node.js 20+ |
+| Runtime | Node.js 20+ (image: `node:22-alpine`) |
 | Decrypt layer | Pure functions over HTML strings — zero network calls, unit-testable |
 | Sessions | In-memory, one entry per `channel:server` |
 | Player | hls.js |

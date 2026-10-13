@@ -1,0 +1,11 @@
+services:
+  daddylive:
+    build: .
+    image: daddylive-stream-resolver
+    container_name: daddylive
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: "3000"
+      # DLHD_BASE: "https://dlive.sx"  # upstream base, override if it moves again
+    restart: unless-stopped
