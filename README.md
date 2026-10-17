@@ -17,7 +17,7 @@ keeps working after the raw CDN URL expires.
 
 [Features](#-features) · [Quick Start](#-quick-start) · [Docker](#-docker) · [Usage](#-usage) · [IPTV Playlist](#-iptv-playlist) · [Players](#-players) · [How It Works](#-how-it-works) · [API](#-http-api) · [Disclaimer](#-disclaimer)
 
-<p><img src="docs/screenshot.png" alt="App screenshot" width="800" /></p>
+<p><img src="docs/Screenshot.png" alt="App screenshot" width="800" /></p>
 
 </div>
 
