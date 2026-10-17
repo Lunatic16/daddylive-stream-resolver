@@ -85,27 +85,25 @@ const HLS_LIVE = {
   maxFragLookUpTolerance: 0.25,
 };
 
+const STORAGE_KEY = "dlhd:lastChannel";
+
 const $ = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(id) as T | null;
 
 const ui = {
   form: $<HTMLFormElement>("watch-form"),
-  channel: $<HTMLInputElement>("channel"),
-  channelSearch: $<HTMLInputElement>("channel-search"),
-  channelDropdown: $("channel-dropdown"),
-  btnBrowseChannels: $<HTMLButtonElement>("btn-browse-channels"),
   downloadM3u8Link: $<HTMLAnchorElement>("download-m3u8-link"),
   btnCopyM3u8: $<HTMLButtonElement>("btn-copy-m3u8"),
-  channelsBrowserCard: $("channels-browser-card"),
   channelCount: $("channel-count"),
-  btnCloseBrowser: $<HTMLButtonElement>("btn-close-browser"),
   channelsFilterInput: $<HTMLInputElement>("channels-filter-input"),
   channelsGrid: $("channels-grid"),
   title: $("stream-title"),
   video: $<HTMLVideoElement>("video"),
+  overlay: $("player-overlay"),
+  overlaySpinner: $("overlay-spinner"),
+  overlayText: $("overlay-text"),
   error: $("error"),
   servers: $("servers"),
-  playerCard: $("player-card"),
   exportCard: $("export-card"),
   timing: $("timing"),
   timingResolve: $("timing-resolve"),
@@ -148,6 +146,15 @@ const state = {
   expiresAt: 0,
 };
 
+// Escape anything that comes from the network before it goes into innerHTML.
+const esc = (value: string) =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
 const fmtRemain = (sec: number) => {
   if (sec <= 0) return "expired";
   const m = Math.floor(sec / 60);
@@ -160,6 +167,26 @@ const fmtRemain = (sec: number) => {
   if (m > 0) return `${m}m ${s}s`;
   return `${s}s`;
 };
+
+const fmtMs = (ms: number) => (ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(2)}s`);
+
+/* ───────── Player overlay ───────── */
+
+type OverlayKind = "empty" | "loading" | "error";
+
+const setOverlay = (kind: OverlayKind | null, text = "") => {
+  if (!ui.overlay) return;
+  if (!kind) {
+    ui.overlay.classList.add("is-off");
+    return;
+  }
+  ui.overlay.classList.remove("is-off");
+  ui.overlay.dataset.kind = kind;
+  if (ui.overlaySpinner) ui.overlaySpinner.hidden = kind !== "loading";
+  if (ui.overlayText) ui.overlayText.textContent = text;
+};
+
+/* ───────── Expiry note ───────── */
 
 const stopExpiryClock = () => {
   if (state.clocks.expiry) {
@@ -208,6 +235,8 @@ const clearStreamNotes = () => {
   if (ui.streamNotes) ui.streamNotes.hidden = true;
 };
 
+/* ───────── Timing clocks ───────── */
+
 const showTiming = () => {
   if (ui.timing) ui.timing.hidden = false;
 };
@@ -251,14 +280,10 @@ const clearTiming = () => {
   state.clocks.playbackStart = 0;
 };
 
-const fmtMs = (ms: number) => (ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(2)}s`);
-
 const parseChannelInput = (raw: string): number | null => {
   const id = Number(raw.trim());
   return Number.isFinite(id) && id >= 1 ? id : null;
 };
-
-const shortError = (message: string) => (message.length <= 40 ? message : `${message.slice(0, 37)}…`);
 
 const showError = (message: string) => {
   if (!ui.error) return;
@@ -269,6 +294,8 @@ const showError = (message: string) => {
 const hideError = () => {
   if (ui.error) ui.error.hidden = true;
 };
+
+/* ───────── Playback ───────── */
 
 const stopPlayback = () => {
   state.gen += 1;
@@ -370,6 +397,8 @@ const bindExports = (entry: ServerExport) => {
   bindStreamNotes(entry.expiresAt);
 };
 
+/* ───────── Server switcher ───────── */
+
 const paintServers = () => {
   if (!ui.servers) return;
   const sorted = [...state.servers].sort(
@@ -377,18 +406,20 @@ const paintServers = () => {
   );
   ui.servers.innerHTML = sorted
     .map((entry) => {
-      const name = entry.label;
+      const name = esc(entry.label);
+      const isActive = entry.server === state.active;
+      const pressed = `aria-pressed="${isActive}"`;
       if (isIdle(entry)) {
-        return `<button type="button" class="badge" data-server="${entry.server}"><span class="badge__name">${name}</span></button>`;
+        return `<button type="button" class="badge" data-server="${entry.server}" ${pressed}><span class="badge__dot"></span><span class="badge__name">${name}</span></button>`;
       }
       if (isRunning(entry)) {
-        return `<button type="button" class="badge badge--running" data-server="${entry.server}" disabled><span class="badge__name">${name}</span></button>`;
+        return `<button type="button" class="badge badge--running badge--active" data-server="${entry.server}" ${pressed} disabled><span class="badge__dot"></span><span class="badge__name">${name}</span></button>`;
       }
-      const active = entry.server === state.active ? " badge--active" : "";
+      const active = isActive ? " badge--active" : "";
       if (!entry.ok) {
-        return `<button type="button" class="badge badge--fail${active}" data-server="${entry.server}" title="${entry.error.replace(/"/g, "&quot;")}"><span class="badge__name">${name}</span><span class="badge__tag">${shortError(entry.error)}</span></button>`;
+        return `<button type="button" class="badge badge--fail${active}" data-server="${entry.server}" ${pressed} title="${esc(entry.error)} — click to retry"><span class="badge__dot"></span><span class="badge__name">${name}</span></button>`;
       }
-      return `<button type="button" class="badge${active}" data-server="${entry.server}"><span class="badge__name">${name}</span></button>`;
+      return `<button type="button" class="badge badge--ok${active}" data-server="${entry.server}" ${pressed}><span class="badge__dot"></span><span class="badge__name">${name}</span></button>`;
     })
     .join("");
 };
@@ -409,19 +440,26 @@ const upsertServer = (entry: ServerEntry) => {
   else state.servers.push(entry);
 };
 
-const selectServer = async (server: ServerKind) => {
-  const channelId = parseChannelInput(ui.channel?.value ?? "");
-  if (!channelId) {
-    showError("enter a valid channel ID");
-    return;
-  }
-  if (ui.channel) ui.channel.value = String(channelId);
-  state.channelId = channelId;
+const channelTitle = () => state.label || `Channel ${state.channelId}`;
+
+type SelectOpts = { fallback?: boolean; note?: string };
+
+// With fallback on, a failed server automatically moves on to the next one,
+// so picking a channel "just works" without clicking through PLAYER 1..6.
+const tryNextServer = (server: ServerKind, opts: SelectOpts): boolean => {
+  if (!opts.fallback) return false;
+  const next = PLAYER_IDS[PLAYER_IDS.indexOf(server) + 1];
+  if (!next) return false;
+  void selectServer(next, { fallback: true, note: `${playerLabel(server)} failed` });
+  return true;
+};
+
+const selectServer = async (server: ServerKind, opts: SelectOpts = {}) => {
+  const channelId = state.channelId;
   hideError();
   stopPlayback();
   clearTiming();
   clearStreamNotes();
-  if (ui.playerCard) ui.playerCard.hidden = false;
 
   const reqId = ++state.resolveGen;
   state.active = server;
@@ -432,11 +470,31 @@ const selectServer = async (server: ServerKind) => {
   }
   upsertServer({ server, label: playerLabel(server), running: true });
   paintServers();
-  if (ui.title) ui.title.textContent = `${state.label || `Channel ${channelId}`} · ${playerLabel(server)}`;
+  if (ui.title) ui.title.textContent = `${channelTitle()} · ${playerLabel(server)}`;
+  setOverlay(
+    "loading",
+    opts.note ? `${opts.note} — trying ${playerLabel(server)}…` : `Resolving ${playerLabel(server)}…`,
+  );
   startClock("resolve");
   setTimingValue("playback", "—");
 
   const live = () => reqId === state.resolveGen;
+
+  const failed = (message: string, label?: string, resolveMs = 0) => {
+    upsertServer({
+      server,
+      label: label ?? playerLabel(server),
+      error: message,
+      resolveMs,
+      ok: false,
+    });
+    paintServers();
+    clearStreamNotes();
+    if (ui.exportCard) ui.exportCard.hidden = true;
+    if (tryNextServer(server, opts)) return;
+    setOverlay("error", `${message}. Try another server.`);
+    showError(message);
+  };
 
   try {
     const res = await fetch(`/api/resolve?channel=${channelId}&server=${server}`);
@@ -444,22 +502,13 @@ const selectServer = async (server: ServerKind) => {
     if (!live()) return;
     const resolveMs = stopClock("resolve");
     if (!res.ok || data.error || !data.direct) {
-      upsertServer({
-        server,
-        label: data.label ?? playerLabel(server),
-        error: data.error ?? "resolve failed",
-        resolveMs: data.resolveMs ?? resolveMs,
-        ok: false,
-      });
-      paintServers();
-      clearStreamNotes();
-      if (ui.exportCard) ui.exportCard.hidden = true;
-      showError(data.error ?? "resolve failed");
+      failed(data.error ?? "Resolve failed", data.label, data.resolveMs ?? resolveMs);
       return;
     }
     if (data.title) {
       const name = data.title.split(" · ")[0];
       if (name) state.label = name;
+      if (ui.title) ui.title.textContent = `${channelTitle()} · ${playerLabel(server)}`;
     }
     bindExports(data);
     try {
@@ -468,29 +517,24 @@ const selectServer = async (server: ServerKind) => {
       upsertServer({ ...data, resolveMs, playbackMs, ok: true });
       paintServers();
       hideError();
+      setOverlay(null);
     } catch {
       if (!live()) return;
       upsertServer({ ...data, resolveMs, ok: true });
       paintServers();
-      showError("playback failed");
+      if (tryNextServer(server, opts)) return;
+      setOverlay("error", "Playback failed. Try another server.");
+      showError("Playback failed");
     }
   } catch {
     if (!live()) return;
     stopClock("resolve");
-    upsertServer({
-      server,
-      label: playerLabel(server),
-      error: "resolve failed",
-      resolveMs: 0,
-      ok: false,
-    });
-    paintServers();
     clearTiming();
-    clearStreamNotes();
-    if (ui.exportCard) ui.exportCard.hidden = true;
-    showError("resolve failed");
+    failed("Resolve failed");
   }
 };
+
+/* ───────── Clipboard ───────── */
 
 // navigator.clipboard is undefined on insecure origins (a phone hitting this
 // over http://lan-ip:3000), and some mobile browsers reject it even when
@@ -551,84 +595,104 @@ document.querySelectorAll<HTMLButtonElement>("[data-copy]").forEach((btn) => {
   });
 });
 
-ui.servers?.addEventListener("click", (event) => {
-  const btn = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-server]");
-  if (!btn?.dataset.server || btn.disabled) return;
-  void selectServer(btn.dataset.server as ServerKind);
-});
-
-ui.channel?.addEventListener("change", () => {
-  stopPlayback();
-  state.resolveGen += 1;
-  state.label = "";
-  state.active = "";
-  if (ui.playerCard) ui.playerCard.hidden = true;
-  if (ui.exportCard) ui.exportCard.hidden = true;
-  clearTiming();
-  clearStreamNotes();
-  hideError();
-  resetBadges();
-});
-
-ui.form?.addEventListener("submit", (event) => {
-  event.preventDefault();
-});
-
-const onChannelSelected = (channelId: number, channelName?: string) => {
-  if (ui.channel) ui.channel.value = String(channelId);
-  if (ui.channelSearch) ui.channelSearch.value = channelName ? `${channelName} (#${channelId})` : "";
-  if (ui.channelDropdown) ui.channelDropdown.hidden = true;
-  if (ui.downloadM3u8Link) {
-    ui.downloadM3u8Link.href = `/api/channels.m3u8`;
+ui.btnCopyM3u8?.addEventListener("click", async () => {
+  const btn = ui.btnCopyM3u8;
+  if (!btn) return;
+  try {
+    await copyText(`${window.location.origin}/api/channels.m3u8`);
+    flashButton(btn, "Copied", "ok");
+  } catch {
+    flashButton(btn, "Copy failed", "err");
   }
-  stopPlayback();
-  state.resolveGen += 1;
-  state.channelId = channelId;
-  state.label = channelName ?? "";
-  state.active = "";
-  if (ui.playerCard) ui.playerCard.hidden = true;
-  if (ui.exportCard) ui.exportCard.hidden = true;
-  clearTiming();
-  clearStreamNotes();
-  hideError();
-  resetBadges();
-  highlightActiveChannelInGrid(channelId);
+});
+
+/* ───────── Channels ───────── */
+
+const remember = (channelId: number) => {
+  try {
+    localStorage.setItem(STORAGE_KEY, String(channelId));
+  } catch {
+    // storage unavailable (private mode etc.) — not important
+  }
 };
 
-const highlightActiveChannelInGrid = (channelId: number) => {
+const recall = (): number | null => {
+  try {
+    return parseChannelInput(localStorage.getItem(STORAGE_KEY) ?? "");
+  } catch {
+    return null;
+  }
+};
+
+const highlightActiveChannelInGrid = (channelId: number, scroll = false) => {
   document.querySelectorAll<HTMLButtonElement>(".channel-btn").forEach((btn) => {
-    btn.classList.toggle("channel-btn--active", btn.dataset.channelId === String(channelId));
+    const active = btn.dataset.channelId === String(channelId);
+    btn.classList.toggle("channel-btn--active", active);
+    if (active) btn.setAttribute("aria-current", "true");
+    else btn.removeAttribute("aria-current");
+    if (active && scroll) btn.scrollIntoView({ block: "center" });
   });
 };
 
-const renderDropdown = (items: { id: number; name: string }[]) => {
-  if (!ui.channelDropdown) return;
-  if (items.length === 0) {
-    ui.channelDropdown.innerHTML = `<div class="channel-dropdown__item" style="cursor:default;color:var(--muted)">No channels found</div>`;
-    ui.channelDropdown.hidden = false;
-    return;
-  }
-  ui.channelDropdown.innerHTML = items
-    .slice(0, 30)
-    .map(
-      (ch) =>
-        `<div class="channel-dropdown__item" data-id="${ch.id}" data-name="${ch.name.replace(/"/g, "&quot;")}"><span>${ch.name}</span><span class="channel-dropdown__id">#${ch.id}</span></div>`,
-    )
-    .join("");
-  ui.channelDropdown.hidden = false;
+const resetStage = () => {
+  stopPlayback();
+  state.resolveGen += 1;
+  state.active = "";
+  if (ui.exportCard) ui.exportCard.hidden = true;
+  clearTiming();
+  clearStreamNotes();
+  hideError();
+  resetBadges();
 };
 
-const renderChannelsGrid = (filter: string = "") => {
+const onChannelSelected = (channelId: number, channelName?: string) => {
+  resetStage();
+  state.channelId = channelId;
+  state.label = channelName ?? state.channels.find((c) => c.id === channelId)?.name ?? "";
+  if (ui.title) ui.title.textContent = channelTitle();
+  remember(channelId);
+  highlightActiveChannelInGrid(channelId);
+
+  void selectServer(PLAYER_IDS[0], { fallback: true });
+};
+
+// Every word typed must match the channel's name or number, in any order:
+// "mediaset italy" and "italy mediaset" both find "20 Mediaset Italy".
+const searchTerms = (q: string) => q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+
+const matchesFilter = (ch: { id: number; name: string }, terms: string[]) => {
+  const name = ch.name.toLowerCase();
+  const id = String(ch.id);
+  return terms.every((t) => name.includes(t) || id.includes(t));
+};
+
+const escRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// Wrap matched text in <mark>, escaping each piece separately so entities never split.
+const highlight = (name: string, terms: string[]) => {
+  if (!terms.length) return esc(name);
+  const re = new RegExp(`(${terms.map(escRe).join("|")})`, "gi");
+  return name
+    .split(re)
+    .map((part, i) => (i % 2 ? `<mark>${esc(part)}</mark>` : esc(part)))
+    .join("");
+};
+
+const renderChannelsGrid = (filter = "") => {
   if (!ui.channelsGrid) return;
-  const q = filter.trim().toLowerCase();
-  const filtered = state.channels.filter(
-    (ch) => !q || ch.name.toLowerCase().includes(q) || String(ch.id).includes(q),
-  );
+  const terms = searchTerms(filter);
+  const filtered = state.channels.filter((ch) => matchesFilter(ch, terms));
   if (ui.channelCount) ui.channelCount.textContent = String(filtered.length);
+  if (filtered.length === 0) {
+    ui.channelsGrid.innerHTML = `<div class="channels__empty">${
+      state.channels.length ? "No channels match your search" : "Loading channels…"
+    }</div>`;
+    return;
+  }
   ui.channelsGrid.innerHTML = filtered
     .map((ch) => {
       const active = ch.id === state.channelId ? " channel-btn--active" : "";
-      return `<button type="button" class="channel-btn${active}" data-channel-id="${ch.id}" data-channel-name="${ch.name.replace(/"/g, "&quot;")}"><span class="channel-btn__name">${ch.name}</span><span class="channel-btn__id">#${ch.id}</span></button>`;
+      return `<button type="button" role="listitem" class="channel-btn${active}" data-channel-id="${ch.id}" data-channel-name="${esc(ch.name)}"><span class="channel-btn__name">${highlight(ch.name, terms)}</span><span class="channel-btn__id">#${ch.id}</span></button>`;
     })
     .join("");
 };
@@ -636,116 +700,68 @@ const renderChannelsGrid = (filter: string = "") => {
 const loadChannels = async () => {
   try {
     const res = await fetch("/api/channels");
-    if (!res.ok) return;
+    if (!res.ok) throw new Error("channels failed");
     state.channels = (await res.json()) as { id: number; name: string }[];
-    if (ui.channelCount) ui.channelCount.textContent = String(state.channels.length);
-    const initialId = parseChannelInput(ui.channel?.value ?? "46");
-    if (initialId) {
-      state.channelId = initialId;
-      const initialCh = state.channels.find((c) => c.id === initialId);
-      if (initialCh && ui.channelSearch) {
-        ui.channelSearch.value = `${initialCh.name} (#${initialCh.id})`;
-        state.label = initialCh.name;
-      }
+    const initial = state.channelId;
+    const known = state.channels.find((c) => c.id === initial);
+    if (known) {
+      state.label = known.name;
+      if (ui.title && !state.active) ui.title.textContent = known.name;
     }
-    renderChannelsGrid();
+    renderChannelsGrid(ui.channelsFilterInput?.value ?? "");
+    highlightActiveChannelInGrid(initial, true);
   } catch {
-    // Non-fatal if channel listing network fails
+    if (ui.channelsGrid) {
+      ui.channelsGrid.innerHTML = `<div class="channels__empty">Couldn't load channels. You can still enter an ID above.</div>`;
+    }
   }
 };
 
-ui.channelSearch?.addEventListener("input", () => {
-  const q = ui.channelSearch!.value.trim().toLowerCase();
-  if (!q) {
-    if (ui.channelDropdown) ui.channelDropdown.hidden = true;
-    return;
-  }
-  const matches = state.channels.filter(
-    (c) => c.name.toLowerCase().includes(q) || String(c.id).includes(q),
-  );
-  renderDropdown(matches);
-});
-
-ui.channelSearch?.addEventListener("focus", () => {
-  const q = ui.channelSearch!.value.trim().toLowerCase();
-  if (q && state.channels.length > 0) {
-    const matches = state.channels.filter(
-      (c) => c.name.toLowerCase().includes(q) || String(c.id).includes(q),
-    );
-    renderDropdown(matches);
-  }
-});
-
-ui.channelDropdown?.addEventListener("click", (event) => {
-  const item = (event.target as HTMLElement).closest<HTMLElement>(".channel-dropdown__item");
-  if (!item?.dataset.id) return;
-  const id = Number(item.dataset.id);
-  const name = item.dataset.name;
-  onChannelSelected(id, name);
-});
-
-document.addEventListener("click", (event) => {
-  if (
-    ui.channelDropdown &&
-    !ui.channelDropdown.contains(event.target as Node) &&
-    event.target !== ui.channelSearch
-  ) {
-    ui.channelDropdown.hidden = true;
-  }
-});
-
-ui.btnCopyM3u8?.addEventListener("click", async () => {
-  const btn = ui.btnCopyM3u8;
-  if (!btn) return;
-  const m3u8Url = `${window.location.origin}/api/channels.m3u8`;
-  try {
-    await copyText(m3u8Url);
-    flashButton(btn, "Copied URL", "ok");
-  } catch {
-    flashButton(btn, "Copy failed", "err");
-  }
-});
-
-ui.btnBrowseChannels?.addEventListener("click", () => {
-  if (!ui.channelsBrowserCard) return;
-  const isHidden = ui.channelsBrowserCard.hidden;
-  ui.channelsBrowserCard.hidden = !isHidden;
-  if (isHidden) {
-    if (ui.channelsFilterInput) {
-      ui.channelsFilterInput.value = "";
-      ui.channelsFilterInput.focus();
-    }
-    renderChannelsGrid();
-  }
-});
-
-ui.btnCloseBrowser?.addEventListener("click", () => {
-  if (ui.channelsBrowserCard) ui.channelsBrowserCard.hidden = true;
+ui.channelsGrid?.addEventListener("click", (event) => {
+  const btn = (event.target as HTMLElement).closest<HTMLButtonElement>(".channel-btn");
+  if (!btn?.dataset.channelId) return;
+  onChannelSelected(Number(btn.dataset.channelId), btn.dataset.channelName);
 });
 
 ui.channelsFilterInput?.addEventListener("input", () => {
   renderChannelsGrid(ui.channelsFilterInput?.value ?? "");
 });
 
-ui.channelsGrid?.addEventListener("click", (event) => {
-  const btn = (event.target as HTMLElement).closest<HTMLButtonElement>(".channel-btn");
-  if (!btn?.dataset.channelId) return;
-  const id = Number(btn.dataset.channelId);
-  const name = btn.dataset.channelName;
-  onChannelSelected(id, name);
-  if (ui.channelsBrowserCard) ui.channelsBrowserCard.hidden = true;
+// Enter in the search box plays the first match.
+ui.channelsFilterInput?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  const terms = searchTerms(ui.channelsFilterInput!.value);
+  const first = state.channels.find((ch) => matchesFilter(ch, terms));
+  if (first) onChannelSelected(first.id, first.name);
 });
 
-ui.channel?.addEventListener("input", () => {
-  const id = parseChannelInput(ui.channel?.value ?? "");
-  if (id && state.channels.length > 0) {
-    const ch = state.channels.find((c) => c.id === id);
-    if (ch && ui.channelSearch) {
-      ui.channelSearch.value = `${ch.name} (#${ch.id})`;
-      state.label = ch.name;
-    }
-  }
+// The search box lives in a form; Enter is handled by the keydown listener above.
+ui.form?.addEventListener("submit", (event) => {
+  event.preventDefault();
 });
 
+ui.servers?.addEventListener("click", (event) => {
+  const btn = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-server]");
+  if (!btn?.dataset.server || btn.disabled) return;
+  void selectServer(btn.dataset.server as ServerKind);
+});
+
+// "/" jumps to channel search (unless already typing somewhere).
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
+  const target = event.target as HTMLElement;
+  if (target.closest("input, textarea, select, [contenteditable]")) return;
+  event.preventDefault();
+  ui.channelsFilterInput?.focus();
+  ui.channelsFilterInput?.select();
+});
+
+/* ───────── Boot ───────── */
+
+state.channelId = recall() ?? 46;
+if (ui.title) ui.title.textContent = `Channel ${state.channelId}`;
+setOverlay("empty", "Pick a channel to start watching");
 resetBadges();
+renderChannelsGrid();
 void loadChannels();
