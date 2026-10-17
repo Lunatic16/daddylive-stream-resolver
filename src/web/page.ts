@@ -20,6 +20,7 @@ export function renderPage(): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0b0b0d">
 <meta name="description" content="${esc(SITE_DESC)}">
 <meta name="robots" content="index,follow">
 <meta property="og:type" content="website">
@@ -33,56 +34,30 @@ export function renderPage(): string {
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.15/dist/hls.min.js"></script>
 </head>
 <body>
-<main class="app">
-<header class="top">
-<div class="top__brand">
-<h1 class="top__title">DaddyLive</h1>
-<p class="top__product">Stream Resolver</p>
+<header class="bar">
+<div class="bar__brand">
+<span class="bar__logo" aria-hidden="true"></span>
+<h1 class="bar__title">DaddyLive <span>Stream Resolver</span></h1>
 </div>
-<p class="top__desc">
-Resolve <a href="${esc(DLHD_BASE)}/" target="_blank" rel="noopener noreferrer">${esc(SITE_HOST)}</a> player servers into direct HLS links. Play here with automatic token refresh, or export for VLC and MPV.
-</p>
+<div class="bar__actions">
+<a href="/api/channels.m3u8" download="daddylive.m3u8" class="btn btn--accent" id="download-m3u8-link">Download playlist</a>
+<button type="button" id="btn-copy-m3u8" class="btn">Copy URL</button>
+<a class="bar__host" href="${esc(DLHD_BASE)}/" target="_blank" rel="noopener noreferrer" title="Source site">${esc(SITE_HOST)} ↗</a>
+</div>
 </header>
 
-<div class="layout">
-<div class="layout__main">
-<section class="card" aria-labelledby="channel-heading">
-<h2 id="channel-heading" class="visually-hidden">Channel</h2>
-<form id="watch-form">
-<div class="channel-inputs">
-<label class="resolve__field">
-<span class="resolve__label">Channel ID</span>
-<input id="channel" type="number" min="1" inputmode="numeric" autocomplete="off" value="46" required>
-</label>
-<label class="resolve__field resolve__field--search">
-<span class="resolve__label">Channel Search / Select</span>
-<input id="channel-search" type="search" placeholder="Search 900+ channels..." autocomplete="off">
-<div id="channel-dropdown" class="channel-dropdown" hidden></div>
-</label>
+<main class="shell">
+<section class="stage" aria-label="Player">
+<div class="player">
+<video id="video" controls playsinline></video>
+<div id="player-overlay" class="overlay" data-kind="empty">
+<div id="overlay-spinner" class="spinner" hidden></div>
+<p id="overlay-text" class="overlay__text">Pick a channel to start watching</p>
 </div>
-<div class="channel-actions">
-<button type="button" id="btn-browse-channels" class="btn--outline">Browse All Channels</button>
-<a href="/api/channels.m3u8" download="daddylive.m3u8" class="btn--m3u8" id="download-m3u8-link">Download M3U8 Playlist</a>
-<button type="button" id="btn-copy-m3u8" class="btn--outline">Copy M3U8 URL</button>
 </div>
-</form>
-<p id="error" class="msg--err" hidden role="alert"></p>
-</section>
 
-<section class="card" id="channels-browser-card" hidden>
-<div class="channels-browser-header">
-<h2 class="section-title">24/7 Channels (<span id="channel-count">0</span>)</h2>
-<button type="button" id="btn-close-browser" class="btn--close" aria-label="Close channels list">✕</button>
-</div>
-<div class="channels-filter-bar">
-<input id="channels-filter-input" type="search" placeholder="Filter channels by name..." autocomplete="off">
-</div>
-<div id="channels-grid" class="channels-grid"></div>
-</section>
-
-<article class="card" id="player-card" hidden>
-<div class="stream-head">
-<h2 id="stream-title" class="stream-title">Stream</h2>
+<div class="now">
+<h2 id="stream-title" class="now__title">Nothing playing</h2>
 <dl id="timing" class="timing" hidden>
 <div class="timing__item">
 <dt class="timing__label">Resolve</dt>
@@ -94,55 +69,52 @@ Resolve <a href="${esc(DLHD_BASE)}/" target="_blank" rel="noopener noreferrer">$
 </div>
 </dl>
 </div>
-<div class="player">
-<video id="video" controls playsinline></video>
+
+<div class="servers-wrap">
+<h2 class="label">Server</h2>
+<div id="servers" class="servers" role="group" aria-label="Available servers"></div>
 </div>
+
+<p id="error" class="msg--err" hidden role="alert"></p>
+
 <ul id="stream-notes" class="stream-notes" hidden>
 <li>
 <span class="stream-notes__label">Direct link</span>
 <span id="note-direct" class="stream-notes__text">—</span>
 </li>
 <li>
-<span class="stream-notes__label">Our Live URL</span>
+<span class="stream-notes__label">Live URL</span>
 <span class="stream-notes__text">Refreshes on its own — this is what plays here</span>
 </li>
 </ul>
-</article>
-</div>
 
-<aside class="layout__side" aria-live="polite">
-<article class="card" id="servers-card">
-<h2 class="section-title">Servers</h2>
-<div id="servers" class="servers" role="group" aria-label="Available servers"></div>
-</article>
-
-<article class="card" id="export-card" hidden>
-<h2 class="section-title">Export</h2>
+<details class="card export" id="export-card" hidden>
+<summary>Share &amp; export</summary>
 <ul class="exports">
-<li id="m3u8-row">
-<div class="export__meta">
-<span class="export__name">M3U8 Stream URL</span>
-<span class="export__hint">IPTV / HLS URL for IPTV players (TiviMate, OTT Navigator, etc.)</span>
-</div>
-<div class="export__row">
-<input id="m3u8-url" readonly aria-label="M3U8 Stream URL">
-<button type="button" data-copy="m3u8-url">Copy</button>
-</div>
-</li>
 <li id="proxy-row">
 <div class="export__meta">
-<span class="export__name">Our Live URL</span>
-<span class="export__hint">Share this — keeps working</span>
+<span class="export__name">Our Live URL <em class="pill">recommended</em></span>
+<span class="export__hint">Keeps working — token refresh is handled for you</span>
 </div>
 <div class="export__row">
 <input id="proxy" readonly aria-label="Stable live stream URL">
 <button type="button" data-copy="proxy">Copy</button>
 </div>
 </li>
+<li id="m3u8-row">
+<div class="export__meta">
+<span class="export__name">M3U8 Stream URL</span>
+<span class="export__hint">For IPTV players (TiviMate, OTT Navigator, etc.)</span>
+</div>
+<div class="export__row">
+<input id="m3u8-url" readonly aria-label="M3U8 Stream URL">
+<button type="button" data-copy="m3u8-url">Copy</button>
+</div>
+</li>
 <li>
 <div class="export__meta">
 <span class="export__name">Direct URL</span>
-<span class="export__hint">Raw link — expires (see time under player)</span>
+<span class="export__hint">Raw link — expires (see the time above)</span>
 </div>
 <div class="export__row">
 <input id="direct" readonly aria-label="Direct stream URL">
@@ -152,7 +124,7 @@ Resolve <a href="${esc(DLHD_BASE)}/" target="_blank" rel="noopener noreferrer">$
 <li>
 <div class="export__meta">
 <span class="export__name">VLC</span>
-<span class="export__hint">Open in VLC</span>
+<span class="export__hint">Command to open in VLC</span>
 </div>
 <div class="export__row">
 <input id="vlc" readonly aria-label="VLC command">
@@ -162,7 +134,7 @@ Resolve <a href="${esc(DLHD_BASE)}/" target="_blank" rel="noopener noreferrer">$
 <li>
 <div class="export__meta">
 <span class="export__name">MPV</span>
-<span class="export__hint">Open in MPV</span>
+<span class="export__hint">Command to open in MPV</span>
 </div>
 <div class="export__row">
 <input id="mpv" readonly aria-label="MPV command">
@@ -170,10 +142,24 @@ Resolve <a href="${esc(DLHD_BASE)}/" target="_blank" rel="noopener noreferrer">$
 </div>
 </li>
 </ul>
-</article>
-</aside>
+</details>
+</section>
+
+<aside class="channels" aria-label="Channels">
+<form id="watch-form" class="channels__head" autocomplete="off">
+<div class="channels__top">
+<h2 class="label">Channels <span class="count">(<span id="channel-count">0</span>)</span></h2>
 </div>
+<div class="search">
+<input id="channels-filter-input" type="search" placeholder="Search channels by name or number" aria-label="Search channels" autocomplete="off" spellcheck="false">
+<kbd class="search__key" aria-hidden="true">/</kbd>
+</div>
+</form>
+
+<div id="channels-grid" class="channels__list" role="list"></div>
+</aside>
 </main>
+
 <script type="application/json" id="app-config">${config}</script>
 <script type="module" src="/app.js"></script>
 </body>
