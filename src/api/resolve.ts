@@ -53,13 +53,16 @@ function toServerExport(
   const direct = resolved.playableUrl;
   const referer = streamReferer(resolved);
   const live = livePlaylistUrl(resolved.channelId, resolved.server, origin);
+  // dembed-edge direct links need a short-lived per-viewer token we can only
+  // attach server-side; external players must go through the live URL.
+  const toolsDirect = profile.transport.vlcDirectPlayable && resolved.meta.family !== "dembed-edge";
   const t = profile.transport;
-  const vlcUrl = t.vlcDirectPlayable ? direct : live;
-  const mpvUrl = t.mpvDirectPlayable ? direct : live;
-  const vlcRef = t.vlcDirectPlayable ? referer || undefined : undefined;
-  const mpvRef = t.mpvDirectPlayable ? referer || undefined : undefined;
-  const vlcUa = t.vlcDirectPlayable && t.toolsUserAgent ? UA : undefined;
-  const mpvUa = t.mpvDirectPlayable && t.toolsUserAgent ? UA : undefined;
+  const vlcUrl = toolsDirect ? direct : live;
+  const mpvUrl = toolsDirect ? direct : live;
+  const vlcRef = toolsDirect ? referer || undefined : undefined;
+  const mpvRef = toolsDirect ? referer || undefined : undefined;
+  const vlcUa = toolsDirect && t.toolsUserAgent ? UA : undefined;
+  const mpvUa = toolsDirect && t.toolsUserAgent ? UA : undefined;
   return {
     server: resolved.server,
     label: playerLabel(resolved.server),
