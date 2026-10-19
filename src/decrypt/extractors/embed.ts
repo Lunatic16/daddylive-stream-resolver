@@ -1,5 +1,6 @@
 import { extractCdnLiveTvM3u8, extractCdnLiveTvMeta } from "./cdnlivetv.js";
 import { extractDaddy3M3u8, extractDaddy3Meta } from "./daddy3.js";
+import { extractDembedEdgeM3u8, extractDembedEdgeMeta } from "./dembed-edge.js";
 import { extractEpiembedsM3u8, extractEpiembedsMeta } from "./epiembeds.js";
 import { buildHubPlayableUrl, decryptHubConfigFromHtml } from "./hub.js";
 import { extractIgniteShipM3u8 } from "./igniteandship.js";
@@ -20,6 +21,14 @@ export function htmlMayContainPlayable(html: string): boolean {
 }
 
 export function extractPlayableFromHtml(html: string): PlayableResult | null {
+  const dembedUrl = extractDembedEdgeM3u8(html);
+  if (dembedUrl) {
+    return {
+      playableUrl: dembedUrl,
+      mimeType: "application/x-mpegURL",
+      meta: { family: "dembed-edge", ...extractDembedEdgeMeta(html) },
+    };
+  }
   const tiestepUrl = extractTiestepM3u8(html);
   if (tiestepUrl) {
     return {
