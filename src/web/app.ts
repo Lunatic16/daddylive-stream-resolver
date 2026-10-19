@@ -77,12 +77,13 @@ const HLS_LIVE = {
   maxMaxBufferLength: 90,
   backBufferLength: 30,
   maxBufferHole: 0.5,
-  fragLoadingTimeOut: 30000,
-  manifestLoadingTimeOut: 20000,
+  fragLoadingTimeOut: 8000,
+  manifestLoadingTimeOut: 30000,
   highBufferWatchdogPeriod: 2,
   nudgeOffset: 0.1,
   nudgeMaxRetry: 5,
   maxFragLookUpTolerance: 0.25,
+  defaultAudioCodec: "mp4a.40.2",
 };
 
 const STORAGE_KEY = "dlhd:lastChannel";
@@ -328,9 +329,15 @@ const playStream = async (src: string, isHls: boolean): Promise<number> => {
       state.hls.loadSource(src);
       state.hls.attachMedia(ui.video);
       await new Promise<void>((resolve, reject) => {
+        let mediaRecoveries = 0;
         state.hls!.on(Hls.Events.MANIFEST_PARSED, () => resolve());
         state.hls!.on(Hls.Events.ERROR, (_, detail) => {
-          const err = detail as { fatal?: boolean; type?: string; details?: string };
+          const err = detail as {
+            fatal?: boolean;
+            type?: string;
+            details?: string;
+            reason?: string;
+          };
           if (!state.hls || !Hls) return;
           if (!err.fatal) {
             if (err.details === "bufferStalledError") state.hls.startLoad();
@@ -341,10 +348,16 @@ const playStream = async (src: string, isHls: boolean): Promise<number> => {
             return;
           }
           if (err.type === Hls.ErrorTypes.MEDIA_ERROR) {
-            state.hls.recoverMediaError();
+            mediaRecoveries += 1;
+            if (mediaRecoveries <= 3) {
+              state.hls.recoverMediaError();
+            } else {
+              state.hls.startLoad();
+              mediaRecoveries = 0;
+            }
             return;
           }
-          reject(new Error("playback failed"));
+          reject(new Error(err.details || err.reason || "playback failed"));
         });
       });
       if (!live()) return stopClock("playback");

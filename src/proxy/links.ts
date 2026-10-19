@@ -1,11 +1,19 @@
+import { createHash } from "node:crypto";
+
 function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
+  return `'${value.replace(/'/g, `'\\''`)}`;
 }
 
-export function buildProxyUrl(directUrl: string, referer: string, origin: string): string {
+function segmentFileName(directUrl: string): string {
+  const hash = createHash("sha256").update(directUrl).digest("base64url").slice(0, 20);
+  return `${hash}.ts`;
+}
+
+export function buildProxyUrl(directUrl: string, referer: string, origin: string, isSegment = false): string {
+  const path = isSegment ? `/api/proxy/${segmentFileName(directUrl)}` : "/api/proxy";
   const params = new URLSearchParams({ url: directUrl });
   if (referer) params.set("referer", referer);
-  return `${origin.replace(/\/$/, "")}/api/proxy?${params}`;
+  return `${origin.replace(/\/$/, "")}${path}?${params}`;
 }
 
 export function buildVlcCommand(playUrl: string, referer?: string, userAgent?: string): string {

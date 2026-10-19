@@ -40,7 +40,7 @@ createServer(async (req, res) => {
       return;
     }
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
-    if (url.pathname === "/api/proxy") {
+    if (url.pathname === "/api/proxy" || /^\/api\/proxy\/[\w-]+\.ts$/.test(url.pathname)) {
       const result = await proxyStream(url.searchParams, url.origin);
       send(res, result.status, result.body, result.type, result.headers);
       return;

@@ -74,7 +74,8 @@ function rewriteLivePlaylist(
       if (trimmed.startsWith("#")) {
         return line.replace(/URI="([^"]+)"/g, (_m, uri: string) => {
           const abs = new URL(uri, baseDir).href;
-          return `URI="${buildProxyUrl(abs, proxyReferer(abs, session), origin)}"`;
+          const isChild = /\.m3u8(\?|$)/i.test(abs);
+          return `URI="${buildProxyUrl(abs, proxyReferer(abs, session), origin, !isChild)}"`;
         });
       }
       const abs = new URL(trimmed, baseDir).href;
@@ -83,7 +84,7 @@ function rewriteLivePlaylist(
         if (isMaster) session.variants[v] = abs;
         return liveChildUrl(session.channelId, session.server, origin, abs, isMaster ? v : undefined);
       }
-      return buildProxyUrl(abs, proxyReferer(abs, session), origin);
+      return buildProxyUrl(abs, proxyReferer(abs, session), origin, true);
     })
     .join("\n");
 }

@@ -40,7 +40,8 @@ function isPlaylist(body: Buffer, targetUrl: string): boolean {
 function proxiedLine(path: string, baseDir: string, referer: string, origin: string): string {
   const abs = new URL(path, baseDir).href;
   const ref = upstreamRuleFor(abs).refererMode === "omit" ? "" : referer;
-  return buildProxyUrl(abs, ref, origin);
+  const isChildPlaylist = /\.m3u8(\?|$)/i.test(abs);
+  return buildProxyUrl(abs, ref, origin, !isChildPlaylist);
 }
 
 function rewritePlaylist(playlist: string, playlistUrl: URL, referer: string, origin: string): string {

@@ -49,7 +49,7 @@ export function renderPage(): string {
 <main class="shell">
 <section class="stage" aria-label="Player">
 <div class="player">
-<video id="video" controls playsinline></video>
+  <video id="video" controls playsinline muted></video>
 <div id="player-overlay" class="overlay" data-kind="empty">
 <div id="overlay-spinner" class="spinner" hidden></div>
 <p id="overlay-text" class="overlay__text">Pick a channel to start watching</p>
