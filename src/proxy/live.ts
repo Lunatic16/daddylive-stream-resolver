@@ -4,6 +4,7 @@ import { buildProxyUrl } from "./links.js";
 import { upstreamRuleFor } from "./rules.js";
 import { coalesceSegment, putCachedSegment } from "./segment-cache.js";
 import { ensureFreshSession, type LiveSession, type ResolveFns } from "./session.js";
+import { appendToken, edgePlaylistToken, invalidateEdgeToken } from "./edge-token.js";
 import type { ProxyResult } from "./stream.js";
 import { unwrapWebpMpegTs } from "./unwrap-webp-ts.js";
 
@@ -54,6 +55,16 @@ function bustPlaylistUrl(url: string): string {
   return u.href;
 }
 
+function isEdgeTokenSession(session: LiveSession): boolean {
+  return session.family === "dembed-edge" && !!session.meta.edge && !!session.meta.slug;
+}
+
+async function withEdgeToken(target: string, session: LiveSession): Promise<string> {
+  if (!isEdgeTokenSession(session)) return target;
+  const token = await edgePlaylistToken(session.meta.edge, session.meta.slug, session.embedUrl);
+  return appendToken(target, token);
+}
+
 function rewriteLivePlaylist(
   playlist: string,
   playlistUrl: URL,
@@ -95,13 +106,13 @@ function swapToken(url: string, session: LiveSession): string {
   return url.replace(/([?&]token=)[^&]+/, `$1${token}`);
 }
 
-async function fetchUpstream(
-  target: string,
-  session: LiveSession,
-): Promise<{ status: number; body: Buffer; type: string }> {
+type UpstreamResult = { status: number; body: Buffer; type: string; retried403?: boolean };
+
+async function fetchUpstream(target: string, session: LiveSession): Promise<UpstreamResult> {
   const res = await fetch(target, {
     headers: upstreamHeaders(session, target),
     redirect: "follow",
+    signal: AbortSignal.timeout(60_000),
   });
   return {
     status: res.status,
@@ -119,10 +130,7 @@ function mediaLineCount(playlist: string): number {
   return n;
 }
 
-async function fetchPlaylist(
-  target: string,
-  session: LiveSession,
-): Promise<{ status: number; body: Buffer; type: string }> {
+async function fetchPlaylist(target: string, session: LiveSession): Promise<UpstreamResult> {
   const first = await fetchUpstream(bustPlaylistUrl(target), session);
   if (first.status >= 400) return first;
   const firstText = first.body.toString("utf8");
@@ -134,6 +142,15 @@ async function fetchPlaylist(
   const secondText = second.body.toString("utf8");
   if (!secondText.startsWith("#EXTM3U")) return first;
   return mediaLineCount(secondText) > firstSegs ? second : first;
+}
+
+async function fetchEdgePlaylist(target: string, session: LiveSession): Promise<UpstreamResult> {
+  const first = await fetchUpstream(await withEdgeToken(target, session), session);
+  if (first.status !== 403) return first;
+  invalidateEdgeToken(session.meta.edge, session.meta.slug);
+  const retryToken = await edgePlaylistToken(session.meta.edge, session.meta.slug, session.embedUrl);
+  const second = await fetchUpstream(appendToken(target, retryToken), session);
+  return second.status === 403 ? { ...second, retried403: true } : second;
 }
 
 async function fetchUnwrappedSegment(target: string, session: LiveSession): Promise<Buffer> {
@@ -180,8 +197,14 @@ export async function proxyLivePlaylist(
     };
   }
 
-  let upstream = await fetchPlaylist(target, session);
-  if (upstream.status === 401 || upstream.status === 403) {
+  const edgeSession = isEdgeTokenSession(session);
+  let upstream = edgeSession
+    ? await fetchEdgePlaylist(target, session)
+    : await fetchPlaylist(target, session);
+  if (
+    (upstream.status === 401 || upstream.status === 403) &&
+    (!edgeSession || upstream.retried403)
+  ) {
     session = await ensureFreshSession(channelId, server, resolve, true);
     target = session.playableUrl;
     if (variant != null && session.variants[variant]) {
@@ -189,7 +212,9 @@ export async function proxyLivePlaylist(
     } else if (childUrl) {
       target = swapToken(childUrl, session);
     }
-    upstream = await fetchPlaylist(target, session);
+    upstream = isEdgeTokenSession(session)
+      ? await fetchEdgePlaylist(target, session)
+      : await fetchPlaylist(target, session);
   }
 
   if (upstream.status >= 400) {
