@@ -344,6 +344,10 @@ const playStream = async (src: string, isHls: boolean): Promise<number> => {
             return;
           }
           if (err.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            if (/manifest/i.test(err.details || "")) {
+              reject(new Error(err.details || "manifest network error"));
+              return;
+            }
             state.hls.startLoad();
             return;
           }
