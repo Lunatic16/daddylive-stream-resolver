@@ -21,11 +21,6 @@ keeps working after the raw CDN URL expires.
 
 </div>
 
-> [!IMPORTANT]
-> **Based on:** [sharoon7171/daddylive-stream-resolver](https://github.com/sharoon7171/daddylive-stream-resolver).
-> 
-> This project is for **educational purposes only**. Respect copyright holders, site terms, and local law — see the [full disclaimer](#-disclaimer).
-
 ## ✨ Features
 
 - 🔓 **Pure-TypeScript decrypt layer** — reads HTML strings only, never calls `fetch`, unit-testable against saved pages
@@ -431,6 +426,5 @@ Respect copyright holders, the terms of any site you visit, and the laws where y
 
 ## 🙏 Acknowledgements
 
-- [sharoon7171](https://github.com/sharoon7171) — Original Developer
 - [dlive.sx](https://dlive.sx/) — upstream player pages (DaddyLive / DLHD)
 - [hls.js](https://github.com/video-dev/hls.js/) — browser playback
