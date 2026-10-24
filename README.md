@@ -35,6 +35,7 @@ keeps working after the raw CDN URL expires.
 - 💾 **Session cache** — one in-memory entry per `channel:server`; no repeat upstream fetches while the signed URL is valid
 - 📋 **One-click export** — VLC and MPV shell commands with the correct flags per server
 - 📡 **IPTV playlist export** — an M3U8 playlist of every channel for VLC, TiviMate and similar apps, grouped by content type and region with English-speaking groups first
+- 📅 **Events browser** — the homepage schedule (main schedule plus every Extra section) with per-event channel chips; UK GMT times convert to your local clock, and channel chips reuse the same resolve + fallback flow as the grid
 - 📦 **Library mode** — import `resolveFromHtml`, `buildVlcCommand`, and friends from `daddylive-stream-resolver`
 - 🧱 **Zero runtime dependencies** — TypeScript and `@types/node` are devDependencies only
 
@@ -91,7 +92,7 @@ The container bypasses the `lsof`/`kill` port-clearing in `npm start` (a host de
 
 The home page is one flow:
 
-1. Enter a **channel ID** (for example `46`).
+1. Pick a channel: browse the **Channels** grid, type a numeric ID, or open the **Events** tab and click a channel chip on a scheduled event.
 2. Click a **PLAYER** badge.
 3. Wait for resolve time and first playback time next to the title.
 4. Watch in the built-in player, or copy an export row below.
@@ -99,7 +100,9 @@ The home page is one flow:
 Only one server resolves at a time — switching badges cancels the previous run's UI updates. Notes under the video show how long the direct link lasts and remind you that **Our Live URL** is what the page actually plays for HLS.
 
 > [!NOTE]
-> There is no homepage channel scrape: you already know the numeric channel ID from the upstream site (dlive.sx / thedaddy.pk).
+> The **Events** tab scrapes the upstream homepage schedule on demand — the main schedule plus every Extra section (lazy `schedule-api.php` sources included) — and caches it server-side for two minutes. Times are UK GMT converted to your local clock; hover a time to see the original. Channels that only exist on extra schedules (Extra Streams, embed.st backups, live-live mirrors) show a ↗ chip that opens the upstream page, since those embed families have no extractor here yet.
+
+<p><img src="docs/events.png" alt="Events tab" width="800" /></p>
 
 ## 🔗 Export Links
 
@@ -307,6 +310,10 @@ Stable HLS playlist for the browser (and for tools when the profile is not direc
 
 Per-channel stream URL used by the [IPTV playlist](#-iptv-playlist). `server` is optional.
 
+### `GET /api/events`
+
+The upstream homepage schedule as JSON: `sections → days → categories → events`, each event carrying its UK GMT `time`, `title`, and `channels`. Numeric channels are playable through [`/api/resolve`](#get-apiresolvechannelidserverkind); extra-schedule families (`watchextra`, `watchstreamed`, `watchlivelive`) carry their upstream `path` for link-out. Days also include a parsed `date` so clients can convert times out of GMT. Cached server-side for 2 minutes.
+
 ### `GET /api/proxy?url={upstream}&referer={embed}`
 
 Fetches one upstream URL with browser-like headers. Playlists are rewritten so every media line points back here. Used by live rewrite and by older one-shot proxy flows.
@@ -378,6 +385,7 @@ type ResolvedStream = {
 src/
   api/          HTTP server, resolve + live handlers, embed fetch chain
   channels/     watch.php and player page URL builders
+  events/       homepage schedule scrape + parse (sections, days, categories, events)
   decrypt/      crypto helpers + embed extractors (no fetch)
   proxy/        playlist rewrite, live session, links, dembed playlist-token minting, WebP→TS unwrap
   servers/      six player profiles (referer / tools behavior)
@@ -404,6 +412,7 @@ Build output goes to `dist/`.
 
 - A channel may omit some player iframes; that is a site gap, not a silent success. Failed resolves stay errors — nothing is invented for missing embeds.
 - Direct CDN links are often signed, and token-gated edges (dembed, PLAYER 1 / 3) cannot be played directly at all — the proxy mints their tokens server-side. Prefer **Our Live URL** for long sessions and sharing. The in-memory session avoids repeat player fetches until expiry; restarting the process clears that cache.
+- The Events tab lists every homepage schedule section, but only numeric channel ids play here. Extra-schedule families (`watchextra.php` → embedsports.me, `watchstreamed.php` → embed.st, `watchlivelive.php` mirrors) have no extractor yet — their chips link to the upstream page instead of pretending to play. Event channels are frequently offline outside their slot; the player falls through servers and reports the failure honestly.
 - Embed chains and CDN rules are third-party and can change without notice — a broken player usually means the upstream embed changed.
 
 ## 🤝 Contributing

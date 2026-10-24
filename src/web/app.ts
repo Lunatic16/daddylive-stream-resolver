@@ -42,6 +42,40 @@ type ServerEntry =
 const isIdle = (entry: ServerEntry): entry is ServerIdle => "idle" in entry;
 const isRunning = (entry: ServerEntry): entry is ServerRunning => "running" in entry;
 
+type EventChannel = {
+  name: string;
+  kind: "channel" | "extra" | "streamed" | "livelive" | "link";
+  channel?: number;
+  path: string;
+};
+
+type ScheduleEvent = {
+  time: string;
+  title: string;
+  channels: EventChannel[];
+};
+
+type EventCategory = {
+  name: string;
+  events: ScheduleEvent[];
+};
+
+type EventDay = {
+  title: string;
+  date?: string;
+  categories: EventCategory[];
+};
+
+type EventSection = {
+  title: string;
+  days: EventDay[];
+};
+
+type EventsFeed = {
+  fetchedAt: string;
+  sections: EventSection[];
+};
+
 type HlsPlayer = {
   loadSource(url: string): void;
   attachMedia(el: HTMLMediaElement): void;
@@ -94,9 +128,15 @@ const ui = {
   form: $<HTMLFormElement>("watch-form"),
   downloadM3u8Link: $<HTMLAnchorElement>("download-m3u8-link"),
   btnCopyM3u8: $<HTMLButtonElement>("btn-copy-m3u8"),
+  tabChannels: $<HTMLButtonElement>("tab-channels"),
+  tabEvents: $<HTMLButtonElement>("tab-events"),
+  panelChannels: $("panel-channels"),
+  panelEvents: $("panel-events"),
   channelCount: $("channel-count"),
   channelsFilterInput: $<HTMLInputElement>("channels-filter-input"),
   channelsGrid: $("channels-grid"),
+  eventsFilterInput: $<HTMLInputElement>("events-filter-input"),
+  eventsList: $("events-list"),
   title: $("stream-title"),
   video: $<HTMLVideoElement>("video"),
   overlay: $("player-overlay"),
@@ -119,9 +159,12 @@ const ui = {
   },
 };
 
-const { players: PLAYER_CONFIG } = JSON.parse(
+const { players: PLAYER_CONFIG, base: DLHD_BASE_URL } = JSON.parse(
   document.getElementById("app-config")!.textContent!,
-) as { players: { id: ServerKind; label: string }[] };
+) as {
+  players: { id: ServerKind; label: string }[];
+  base: string;
+};
 
 const PLAYER_IDS = PLAYER_CONFIG.map((player) => player.id);
 const playerLabel = (server: ServerKind) =>
@@ -134,6 +177,7 @@ const state = {
   label: "",
   channelId: 0,
   channels: [] as { id: number; name: string }[],
+  events: null as EventsFeed | null,
   servers: [] as ServerEntry[],
   active: "" as ServerKind | "",
   clocks: {
@@ -328,7 +372,27 @@ const playStream = async (src: string, isHls: boolean): Promise<number> => {
       state.hls.loadSource(src);
       state.hls.attachMedia(ui.video);
       await new Promise<void>((resolve, reject) => {
-        state.hls!.on(Hls.Events.MANIFEST_PARSED, () => resolve());
+        // Event channels are often offline outside their slot: the edge 404s the
+        // playlist and hls.js would retry it forever, freezing the server
+        // fallback. Bound only the pre-manifest wait — after the manifest
+        // parses, the infinite live-edge retry behaviour below stays as-is.
+        let settled = false;
+        let manifestFailures = 0;
+        const giveUp = window.setTimeout(() => {
+          if (!settled) {
+            settled = true;
+            reject(new Error("playback failed"));
+          }
+        }, 30000);
+        const settle = (ok: boolean) => {
+          if (settled) return false;
+          settled = true;
+          window.clearTimeout(giveUp);
+          if (ok) resolve();
+          else reject(new Error("playback failed"));
+          return true;
+        };
+        state.hls!.on(Hls.Events.MANIFEST_PARSED, () => settle(true));
         state.hls!.on(Hls.Events.ERROR, (_, detail) => {
           const err = detail as { fatal?: boolean; type?: string; details?: string };
           if (!state.hls || !Hls) return;
@@ -337,6 +401,10 @@ const playStream = async (src: string, isHls: boolean): Promise<number> => {
             return;
           }
           if (err.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            if (!settled && ++manifestFailures > 3) {
+              settle(false);
+              return;
+            }
             state.hls.startLoad();
             return;
           }
@@ -344,7 +412,7 @@ const playStream = async (src: string, isHls: boolean): Promise<number> => {
             state.hls.recoverMediaError();
             return;
           }
-          reject(new Error("playback failed"));
+          settle(false);
         });
       });
       if (!live()) return stopClock("playback");
@@ -632,6 +700,12 @@ const highlightActiveChannelInGrid = (channelId: number, scroll = false) => {
     else btn.removeAttribute("aria-current");
     if (active && scroll) btn.scrollIntoView({ block: "center" });
   });
+  document.querySelectorAll<HTMLButtonElement>(".chip--play").forEach((btn) => {
+    const active = btn.dataset.channelId === String(channelId);
+    btn.classList.toggle("chip--active", active);
+    if (active) btn.setAttribute("aria-current", "true");
+    else btn.removeAttribute("aria-current");
+  });
 };
 
 const resetStage = () => {
@@ -741,20 +815,191 @@ ui.form?.addEventListener("submit", (event) => {
   event.preventDefault();
 });
 
+/* ───────── Events ───────── */
+
+const isPlayableChannel = (ch: EventChannel) => ch.kind === "channel" && (ch.channel ?? 0) >= 1;
+
+const upstreamUrl = (path: string) =>
+  `${DLHD_BASE_URL.replace(/\/+$/, "")}${path.startsWith("/") ? path : `/${path}`}`;
+
+// The site publishes times in UK GMT; show them on the viewer's local clock.
+// When the conversion crosses midnight the label gains a "+1d"/"−1d" marker,
+// and the original GMT time stays available in the tooltip.
+const localClock = new Intl.DateTimeFormat(undefined, {
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+
+const localDayKey = (date: Date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+    date.getDate(),
+  ).padStart(2, "0")}`;
+
+const eventTimeLabel = (day: EventDay, time: string): string => {
+  if (!day.date || !/^\d{1,2}:\d{2}$/.test(time)) return time;
+  const stamp = new Date(`${day.date}T${time.padStart(5, "0")}:00Z`);
+  if (Number.isNaN(stamp.getTime())) return time;
+  const local = localDayKey(stamp);
+  if (local === day.date) return localClock.format(stamp);
+  return `${localClock.format(stamp)} ${local > day.date ? "+1d" : "−1d"}`;
+};
+
+const eventMatches = (event: ScheduleEvent, terms: string[]) => {
+  if (!terms.length) return true;
+  const hay = `${event.time} ${event.title} ${event.channels.map((c) => c.name).join(" ")}`.toLowerCase();
+  return terms.every((t) => hay.includes(t));
+};
+
+const sectionEventCount = (section: EventSection) =>
+  section.days.reduce(
+    (sum, day) => sum + day.categories.reduce((inner, cat) => inner + cat.events.length, 0),
+    0,
+  );
+
+const chipHtml = (ch: EventChannel, terms: string[]) => {
+  const label = highlight(ch.name, terms);
+  if (isPlayableChannel(ch)) {
+    const active = ch.channel === state.channelId ? " chip--active" : "";
+    return `<button type="button" class="chip chip--play${active}" data-channel-id="${ch.channel}" data-channel-name="${esc(ch.name)}">${label}</button>`;
+  }
+  return `<a class="chip chip--ext" href="${esc(upstreamUrl(ch.path))}" target="_blank" rel="noopener noreferrer" title="Open on the source site — this channel family is not supported by the resolver">${label} ↗</a>`;
+};
+
+const eventRowHtml = (event: ScheduleEvent, day: EventDay, context: string, terms: string[]) =>
+  `<div class="event">` +
+  `<div class="event__main">` +
+  `<span class="event__time" title="${esc(event.time)} UK GMT">${esc(eventTimeLabel(day, event.time))}</span>` +
+  `<span class="event__title">${highlight(event.title, terms)}</span>` +
+  (context ? `<span class="event__ctx">${esc(context)}</span>` : "") +
+  `</div>` +
+  `<div class="event__channels">` +
+  (event.channels.length
+    ? event.channels.map((ch) => chipHtml(ch, terms)).join("")
+    : `<span class="event__none">no channel listed</span>`) +
+  `</div>` +
+  `</div>`;
+
+const renderEvents = (filter = "") => {
+  if (!ui.eventsList || !state.events) return;
+  const terms = searchTerms(filter);
+  if (!terms.length) {
+    ui.eventsList.innerHTML = state.events.sections
+      .map((section, si) => {
+        const days = section.days
+          .map((day) => {
+            const categories = day.categories
+              .map((cat, ci) => {
+                const open = si === 0 && ci === 0 ? " open" : "";
+                return `<details class="event-cat"${open}><summary><span class="summary__title">${esc(cat.name)}</span><span class="count">(${cat.events.length})</span></summary><div class="event-cat__body">${cat.events.map((ev) => eventRowHtml(ev, day, "", terms)).join("")}</div></details>`;
+              })
+              .join("");
+            return `<div class="event-day">${day.title ? `<div class="event-day__title">${esc(day.title)}</div>` : ""}${categories}</div>`;
+          })
+          .join("");
+        const open = si === 0 ? " open" : "";
+        return `<details class="event-section"${open}><summary><span class="summary__title">${esc(section.title)}</span><span class="count">(${sectionEventCount(section)})</span></summary>${days}</details>`;
+      })
+      .join("");
+    return;
+  }
+  const rows: string[] = [];
+  for (const section of state.events.sections) {
+    for (const day of section.days) {
+      for (const cat of day.categories) {
+        for (const ev of cat.events) {
+          if (!eventMatches(ev, terms)) continue;
+          rows.push(eventRowHtml(ev, day, `${section.title} · ${cat.name}`, terms));
+        }
+      }
+    }
+  }
+  ui.eventsList.innerHTML = rows.length
+    ? `<div class="event-cat__body">${rows.join("")}</div>`
+    : `<div class="events__empty">No events match your search</div>`;
+};
+
+const loadEvents = async () => {
+  if (state.events) return;
+  if (ui.eventsList) ui.eventsList.innerHTML = `<div class="events__empty">Loading events…</div>`;
+  try {
+    const res = await fetch("/api/events");
+    if (!res.ok) throw new Error("events failed");
+    state.events = (await res.json()) as EventsFeed;
+  } catch {
+    if (ui.eventsList) {
+      const host = esc(DLHD_BASE_URL.replace(/^https?:\/\//, ""));
+      ui.eventsList.innerHTML = `<div class="events__empty">Couldn't load events from ${host}. Try again in a moment.</div>`;
+    }
+    return;
+  }
+  renderEvents(ui.eventsFilterInput?.value ?? "");
+};
+
+ui.eventsList?.addEventListener("click", (event) => {
+  const btn = (event.target as HTMLElement).closest<HTMLButtonElement>(".chip--play");
+  if (!btn?.dataset.channelId) return;
+  onChannelSelected(Number(btn.dataset.channelId), btn.dataset.channelName);
+});
+
+ui.eventsFilterInput?.addEventListener("input", () => {
+  renderEvents(ui.eventsFilterInput?.value ?? "");
+});
+
+// Enter in the events search plays the first match's playable channel.
+ui.eventsFilterInput?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  const terms = searchTerms(ui.eventsFilterInput!.value);
+  for (const section of state.events?.sections ?? []) {
+    for (const day of section.days) {
+      for (const cat of day.categories) {
+        for (const ev of cat.events) {
+          if (!eventMatches(ev, terms)) continue;
+          const playable = ev.channels.find(isPlayableChannel);
+          if (playable?.channel != null) {
+            onChannelSelected(playable.channel, playable.name);
+            return;
+          }
+        }
+      }
+    }
+  }
+});
+
+const activePanel = (): "channels" | "events" =>
+  ui.panelEvents && !ui.panelEvents.hidden ? "events" : "channels";
+
+const switchPanel = (panel: "channels" | "events") => {
+  const showChannels = panel === "channels";
+  ui.tabChannels?.classList.toggle("tab--active", showChannels);
+  ui.tabChannels?.setAttribute("aria-selected", String(showChannels));
+  ui.tabEvents?.classList.toggle("tab--active", !showChannels);
+  ui.tabEvents?.setAttribute("aria-selected", String(!showChannels));
+  if (ui.panelChannels) ui.panelChannels.hidden = !showChannels;
+  if (ui.panelEvents) ui.panelEvents.hidden = showChannels;
+  if (!showChannels) void loadEvents();
+};
+
+ui.tabChannels?.addEventListener("click", () => switchPanel("channels"));
+ui.tabEvents?.addEventListener("click", () => switchPanel("events"));
+
 ui.servers?.addEventListener("click", (event) => {
   const btn = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-server]");
   if (!btn?.dataset.server || btn.disabled) return;
   void selectServer(btn.dataset.server as ServerKind);
 });
 
-// "/" jumps to channel search (unless already typing somewhere).
+// "/" jumps to the search box of the visible panel (unless already typing somewhere).
 document.addEventListener("keydown", (event) => {
   if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
   const target = event.target as HTMLElement;
   if (target.closest("input, textarea, select, [contenteditable]")) return;
   event.preventDefault();
-  ui.channelsFilterInput?.focus();
-  ui.channelsFilterInput?.select();
+  const input =
+    activePanel() === "events" ? ui.eventsFilterInput : ui.channelsFilterInput;
+  input?.focus();
+  input?.select();
 });
 
 /* ───────── Boot ───────── */

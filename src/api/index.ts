@@ -8,6 +8,7 @@ import { proxyStream } from "../proxy/stream.js";
 import { renderPage } from "../web/page.js";
 import { handleLivePlaylist, handleResolveOne } from "./resolve.js";
 import { fetchChannelList, generateM3u8Playlist } from "../channels/index.js";
+import { fetchEventsFeed } from "../events/index.js";
 
 const PORT = Number(process.env.PORT ?? "3000");
 
@@ -81,6 +82,21 @@ createServer(async (req, res) => {
         return;
       }
       await handleResolveOne(res, channelId, serverParam as ServerKind, url.origin);
+      return;
+    }
+    if (url.pathname === "/api/events") {
+      try {
+        const feed = await fetchEventsFeed();
+        send(res, 200, JSON.stringify(feed), "application/json; charset=utf-8", {
+          "Access-Control-Allow-Origin": "*",
+          "Cache-Control": "no-store",
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "failed";
+        send(res, 502, JSON.stringify({ error: message }), "application/json; charset=utf-8", {
+          "Access-Control-Allow-Origin": "*",
+        });
+      }
       return;
     }
     if (url.pathname === "/api/channels") {

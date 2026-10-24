@@ -14,7 +14,7 @@ function esc(value: string): string {
 }
 
 export function renderPage(): string {
-  const config = JSON.stringify({ players: PLAYERS }).replace(/</g, "\\u003c");
+  const config = JSON.stringify({ players: PLAYERS, base: DLHD_BASE }).replace(/</g, "\\u003c");
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -146,6 +146,12 @@ export function renderPage(): string {
 </section>
 
 <aside class="channels" aria-label="Channels">
+<div class="channels__tabs" role="tablist" aria-label="Browse">
+<button type="button" id="tab-channels" class="tab tab--active" role="tab" aria-selected="true" aria-controls="panel-channels">Channels</button>
+<button type="button" id="tab-events" class="tab" role="tab" aria-selected="false" aria-controls="panel-events">Events</button>
+</div>
+
+<div id="panel-channels" class="panel" role="tabpanel" aria-labelledby="tab-channels">
 <form id="watch-form" class="channels__head" autocomplete="off">
 <div class="channels__top">
 <h2 class="label">Channels <span class="count">(<span id="channel-count">0</span>)</span></h2>
@@ -157,6 +163,15 @@ export function renderPage(): string {
 </form>
 
 <div id="channels-grid" class="channels__list" role="list"></div>
+</div>
+
+<div id="panel-events" class="panel" role="tabpanel" aria-labelledby="tab-events" hidden>
+<div class="events__head">
+<input id="events-filter-input" type="search" placeholder="Search events, teams or channels" aria-label="Search events" autocomplete="off" spellcheck="false">
+<p class="events__hint">Times are UK GMT converted to your local clock — hover a time to see the original. Channel chips play here; ones marked ↗ open on ${esc(SITE_HOST)} because that embed family isn't supported by the resolver yet.</p>
+</div>
+<div id="events-list" class="events__list"></div>
+</div>
 </aside>
 </main>
 
