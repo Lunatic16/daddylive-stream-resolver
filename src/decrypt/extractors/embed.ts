@@ -1,5 +1,6 @@
 import { extractCdnLiveTvM3u8, extractCdnLiveTvMeta } from "./cdnlivetv.js";
 import { extractDaddy3M3u8, extractDaddy3Meta } from "./daddy3.js";
+import { extractDembedStream } from "./dembed.js";
 import { extractEpiembedsM3u8, extractEpiembedsMeta } from "./epiembeds.js";
 import { buildHubPlayableUrl, decryptHubConfigFromHtml } from "./hub.js";
 import { extractIgniteShipM3u8 } from "./igniteandship.js";
@@ -14,12 +15,20 @@ export type PlayableResult = {
 };
 
 export function htmlMayContainPlayable(html: string): boolean {
-  return /#EXTM3U|SIGNED_URL|ENCRYPTED_CONFIG|window\._econfig|streamUrl:|var _\w+=\[|var\s+_gr\w+=\[|function \w+\(s\)\{[^}]*atob|<source[^>]+\/webm\/|player\.load\(\{source:|https:\/\/[^"'`\s]+\.m3u8|\/premium\d+\/index\.m3u8/.test(
+  return /#EXTM3U|SIGNED_URL|ENCRYPTED_CONFIG|window\._econfig|streamUrl:|var _\w+=\[|var\s+_gr\w+=\[|function \w+\(s\)\{[^}]*atob|<source[^>]+\/webm\/|player\.load\(\{source:|https:\/\/[^"'`\s]+\.m3u8|\/premium\d+\/index\.m3u8|api\/playlist-token\?slug=/.test(
     html,
   );
 }
 
 export function extractPlayableFromHtml(html: string): PlayableResult | null {
+  const dembed = extractDembedStream(html);
+  if (dembed) {
+    return {
+      playableUrl: dembed.playableUrl,
+      mimeType: "application/x-mpegURL",
+      meta: { family: "dembed", edge: dembed.edge, slug: dembed.slug },
+    };
+  }
   const tiestepUrl = extractTiestepM3u8(html);
   if (tiestepUrl) {
     return {

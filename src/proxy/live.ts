@@ -1,6 +1,11 @@
 import type { ServerKind } from "../servers/kinds.js";
 import { UA } from "../http.js";
 import { buildProxyUrl } from "./links.js";
+import {
+  dembedPlaylistToken,
+  invalidateDembedToken,
+  withDembedParams,
+} from "./dembed.js";
 import { upstreamRuleFor } from "./rules.js";
 import { coalesceSegment, putCachedSegment } from "./segment-cache.js";
 import { ensureFreshSession, type LiveSession, type ResolveFns } from "./session.js";
@@ -90,8 +95,25 @@ function rewriteLivePlaylist(
 
 function swapToken(url: string, session: LiveSession): string {
   const token = session.meta.token;
-  if (!token || !/[?&]token=/.test(url)) return url;
+  if (!token || /[?&]token=/.test(url) === false) return url;
   return url.replace(/([?&]token=)[^&]+/, `$1${token}`);
+}
+
+function dembedOf(session: LiveSession): { edge: string; slug: string } | null {
+  if (session.meta.family !== "dembed" || !session.meta.edge || !session.meta.slug) return null;
+  return { edge: session.meta.edge, slug: session.meta.slug };
+}
+
+/**
+ * Builds the upstream URL for a playlist fetch. dembed edges only serve
+ * playlists with a freshly minted `t=` token, so re-mint per fetch; every
+ * other family keeps the plain cache-busted URL.
+ */
+async function playlistFetchTarget(session: LiveSession, target: string): Promise<string> {
+  const dembed = dembedOf(session);
+  if (!dembed || !target.startsWith(dembed.edge)) return bustPlaylistUrl(target);
+  const token = await dembedPlaylistToken(dembed.edge, dembed.slug, session.referer);
+  return withDembedParams(target, token);
 }
 
 async function fetchUpstream(
@@ -179,8 +201,10 @@ export async function proxyLivePlaylist(
     };
   }
 
-  let upstream = await fetchPlaylist(target, session);
+  let upstream = await fetchPlaylist(await playlistFetchTarget(session, target), session);
   if (upstream.status === 401 || upstream.status === 403) {
+    const staleDembed = dembedOf(session);
+    if (staleDembed) invalidateDembedToken(staleDembed.edge, staleDembed.slug);
     session = await ensureFreshSession(channelId, server, resolve, true);
     target = session.playableUrl;
     if (variant != null && session.variants[variant]) {
@@ -188,7 +212,7 @@ export async function proxyLivePlaylist(
     } else if (childUrl) {
       target = swapToken(childUrl, session);
     }
-    upstream = await fetchPlaylist(target, session);
+    upstream = await fetchPlaylist(await playlistFetchTarget(session, target), session);
   }
 
   if (upstream.status >= 400) {
