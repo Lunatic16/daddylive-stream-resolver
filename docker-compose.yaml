@@ -7,5 +7,5 @@ services:
       - "3000:3000"
     environment:
       PORT: "3000"
-      # DLHD_BASE: "https://dlive.sx"  # upstream base, override if it moves again
+      DLHD_BASE: "https://thedaddy.pk/"  # upstream base, override if it moves again
     restart: unless-stopped
