@@ -31,7 +31,7 @@ keeps working after the raw CDN URL expires.
 - 🔓 **Pure-TypeScript decrypt layer** — reads HTML strings only, never calls `fetch`, unit-testable against saved pages
 - 📺 **Six player servers wired** — each with its own transport profile (referer rules, tool flags, UA handling)
 - 🔁 **Stable share links** — the **Our Live URL** refreshes signed tokens so links outlive the raw CDN URL
-- 🚰 **Smart proxy** — rewrites playlists and unwraps WebP / PNG polyglot segments into MPEG-TS on the fly
+- 🚰 **Smart proxy** — rewrites playlists, mints short-lived playlist tokens for token-gated edges (dembed family), and unwraps WebP / PNG polyglot segments into MPEG-TS on the fly
 - 💾 **Session cache** — one in-memory entry per `channel:server`; no repeat upstream fetches while the signed URL is valid
 - 📋 **One-click export** — VLC and MPV shell commands with the correct flags per server
 - 📡 **IPTV playlist export** — an M3U8 playlist of every channel for VLC, TiviMate and similar apps, grouped by content type and region with English-speaking groups first
@@ -99,7 +99,7 @@ The home page is one flow:
 Only one server resolves at a time — switching badges cancels the previous run's UI updates. Notes under the video show how long the direct link lasts and remind you that **Our Live URL** is what the page actually plays for HLS.
 
 > [!NOTE]
-> There is no homepage channel scrape: you already know the numeric channel ID from dlive.sx.
+> There is no homepage channel scrape: you already know the numeric channel ID from the upstream site (dlive.sx / thedaddy.pk).
 
 ## 🔗 Export Links
 
@@ -113,7 +113,7 @@ After a successful resolve, the export card shows four fields:
 | **MPV** | Shell line with optional `--referrer`, `--user-agent`, and a media title |
 
 > [!TIP]
-> Which URL each tool line uses depends on the server profile — VLC and MPV can differ (direct vs Our Live URL) when one player demuxes the CDN and the other does not. For long sessions and sharing, prefer **Our Live URL**.
+> Which URL each tool line uses depends on the server profile — VLC and MPV can differ (direct vs Our Live URL) when one player demuxes the CDN and the other does not, or when the edge only serves playlists to token-minted requests (PLAYER 1 / 3). For long sessions and sharing, prefer **Our Live URL**.
 
 ## 📡 IPTV Playlist
 
@@ -165,7 +165,7 @@ Anything unmatched falls back to `Entertainment - USA Cable`, so add a rule when
 
 ## 📺 Players
 
-Six DaddyLive player routes are wired. Each maps to a path like `/{server}/stream-{id}.php` on dlive.sx:
+Six DaddyLive player routes are wired. Each maps to a path like `/{server}/stream-{id}.php` on the upstream site (dlive.sx / thedaddy.pk):
 
 | Badge | Server ID | Path |
 | --- | --- | --- |
@@ -179,58 +179,58 @@ Six DaddyLive player routes are wired. Each maps to a path like `/{server}/strea
 > [!NOTE]
 > Not every channel exposes every embed. If a page has no iframe, resolve fails with a clear error for that badge only — failed resolves stay errors, nothing is invented for missing embeds.
 
-Embed families the decrypt layer knows include tiestep (`_econfig`), epiembeds (XOR arrays), wideiptv, cdnlivetv, daddy3, hub / livelive24 WebM, and related hop pages (wikisport, blogger-player). Transport rules per server live under `src/servers/` (referer required / optional / omitted, separate VLC/MPV flags for direct CDN vs Our Live URL, optional browser User-Agent for tools).
+Embed families the decrypt layer knows include dembed (premiumtv playlist-token edges, PLAYER 1 / 3), tiestep (`_econfig`), epiembeds (XOR arrays), wideiptv, cdnlivetv, daddy3, hub / livelive24 WebM, and related hop pages (wikisport, blogger-player). Transport rules per server live under `src/servers/` (referer required / optional / omitted, separate VLC/MPV flags for direct CDN vs Our Live URL, optional browser User-Agent for tools).
 
 ### Transport at a glance
 
 | Badge | Direct CDN play | Extra headers | Notes |
 | --- | --- | --- | --- |
-| PLAYER 1 (`stream`) | ✅ | Browser UA + embed-page Referer | VLC needs `:http-*` input options (see below) |
-| PLAYER 2 (`cast`) | ✅ | Browser UA + embed-page Referer | Same `_econfig` family as PLAYER 1 |
-| PLAYER 3 (`watch`) | ❌ stock tools | — | Play via **Our Live URL** (PNG-wrapped TS on TikTok CDN) |
-| PLAYER 4 (`plus`) | ⚠️ MPV ✅ / VLC ❌ | Referer not required | VLC via **Our Live URL** so the proxy unwraps WebP |
-| PLAYER 5 (`casting`) | ✅ | None | Bare requests OK |
-| PLAYER 6 (`player`) | ✅ | None | Bare requests OK |
+| PLAYER 1 (`stream`) | ❌ token-gated | — | Edge serves playlists only with a minted `t=` token; tools use **Our Live URL** |
+| PLAYER 2 (`cast`) | ✅ | Browser UA + embed-page Referer | `_econfig` family on rotating hosts |
+| PLAYER 3 (`watch`) | ❌ stock tools | — | Same dembed edge as PLAYER 1, plus PNG-wrapped TS on TikTok CDN |
+| PLAYER 4 (`plus`) | ❌ | — | Embed family changed upstream; resolve fails until a new extractor lands |
+| PLAYER 5 (`casting`) | ✅ | None | Bare requests OK; some channels lack the embed upstream |
+| PLAYER 6 (`player`) | ✅ | None | Bare requests OK; some channels lack the embed upstream |
 
 <details>
-<summary><b>PLAYER 1 — <code>stream</code> (tiestep / assetrage)</b></summary>
+<summary><b>PLAYER 1 — <code>stream</code> (dembed premiumtv playlist-token edge)</b></summary>
 
-Directly playable: browser User-Agent plus Referer set to the **embed page URL** (not a hardcoded host). Playlist alone accepts UA; `.ts` segments require both. VLC needs input options after the URL (`:http-user-agent=` / `:http-referrer=`) — global `--http-user-agent` is ignored on HLS and sends `VLC/…`, which the CDN rejects with 403. MPV uses `--user-agent` / `--referrer` on the direct URL. Proxy not required for PLAYER 1 tools.
+Embed is `dembed.st/premiumtv/daddy.php?id={N}`. The player page declares the whole chain in plaintext consts — `const SRC` (the playlist URL, `edge.cowedd…/premium{N}/index.m3u8`), `const EDGE`, and `const CHANNEL` — which the dembed extractor captures. The bare playlist URL is **not playable**: without the right `Origin` the edge answers `403 forbidden`, and with it `403 token required`. Playback needs a short-lived token minted from `{EDGE}/api/playlist-token?slug={CHANNEL}` (the `Origin` header must be exactly the embed host's origin — anything else, including the top-level site's, is rejected). The proxy mints a token per playlist fetch, attaches it as `t=` with a `_=` cache-buster to **manifest requests only**, renews in the background from halfway through the ~120 s TTL, and on a 403 invalidates and re-mints before force-re-resolving. Segments are absolute PNG-wrapped MPEG-TS on TikTok CDN — no token, plain UA, no Referer. Stock VLC/MPV cannot mint tokens, so their export lines point at **Our Live URL**.
 
 </details>
 
 <details>
-<summary><b>PLAYER 2 — <code>cast</code> (tiestep.top)</b></summary>
+<summary><b>PLAYER 2 — <code>cast</code> (<code>_econfig</code> family, rotating hosts)</b></summary>
 
-Matches the same CDN rules (verified live): embed is `tiestep.top` (PLAYER 1 uses `assetrage.net`), same `_econfig` family, same direct play with UA + embed Referer. Proxy not required for PLAYER 2 tools.
+Same `_econfig` family as earlier rounds on a rotated host: the embed currently lives at `tossequip.net` and resolves to HLS on `7odxv0l067ka.net` (hosts rotate per round — `tiestep.top` served earlier ones, and PLAYER 1 has left this family entirely, see above). Direct play works with browser UA + embed-page Referer. Proxy not required for PLAYER 2 tools.
 
 </details>
 
 <details>
 <summary><b>PLAYER 3 — <code>watch</code> (PNG-wrapped TS on TikTok CDN)</b></summary>
 
-Upstream is a sliding live window (`edge.cowedd…/premium{N}/index.m3u8`) whose media lines are PNG-wrapped MPEG-TS on TikTok CDN (`TIKTIKPX`). Stock VLC/MPV on the CDN URL fail. Our Live URL must **not** append `#EXT-X-ENDLIST` (that turned live into VOD and stopped after a few seconds). Match the embed player: strip `#EXT-X-PROGRAM-DATE-TIME`, unwrap segments in the proxy, cache immutable TikTok URLs (coalesced, max 2 upstream fetches), and use the embed hls.js live buffer settings (`lowLatencyMode: false`, `liveSyncDurationCount: 4`).
+Upstream is the same dembed premiumtv edge as PLAYER 1 — a sliding live window (`edge.cowedd…/premium{N}/index.m3u8`) whose playlists are token-gated (the proxy mints them, see PLAYER 1) and whose media lines are PNG-wrapped MPEG-TS on TikTok CDN (`TIKTIKPX`). Stock VLC/MPV on the CDN URL fail. Our Live URL must **not** append `#EXT-X-ENDLIST` (that turned live into VOD and stopped after a few seconds). Match the embed player: strip `#EXT-X-PROGRAM-DATE-TIME`, unwrap segments in the proxy, cache immutable TikTok URLs (coalesced, max 2 upstream fetches), and use the embed hls.js live buffer settings (`lowLatencyMode: false`, `liveSyncDurationCount: 4`).
 
 </details>
 
 <details>
-<summary><b>PLAYER 4 — <code>plus</code> (WebP-EXIF MPEG-TS)</b></summary>
+<summary><b>PLAYER 4 — <code>plus</code> (embed changed upstream — currently unresolvable)</b></summary>
 
-Segments are WebP-EXIF MPEG-TS. **MPV** plays the CDN direct URL (ffmpeg demuxes it). **VLC** fails demux on `image/webp` (`Failed to create demuxer`); playlist host also rejects VLC's default UA (403). Referer not required. Export: MPV → direct; VLC → **Our Live URL** (bare) so the proxy unwraps segments.
+The old WebP-EXIF family no longer serves this badge. The embed now 302-redirects to a JWT-path player (`…/play/eyJhbG…`) that none of the extractors match, so resolve returns `no playable stream in plus embed` on every channel tried. The WebP-EXIF unwrapper is still in the proxy for any source that returns that shape. A new extractor is needed once the family settles.
 
 </details>
 
 <details>
 <summary><b>PLAYER 5 — <code>casting</code> (cdnlivetv)</b></summary>
 
-Embed is `api.cdnlivetv.tv` (base64-chunk playlist URL + token). Playlist and `.ts` segments accept bare requests (no Referer). VLC's default UA and browser UA both fetch segments as `video/mp2t` (sync `0x47`). **VLC** and **MPV** play the direct CDN `.m3u8` with no extra headers. Proxy not required for PLAYER 5 tools.
+Embed is `api.cdnlivetv.tv` (base64-chunk playlist URL + token). Playlist and `.ts` segments accept bare requests (no Referer). VLC's default UA and browser UA both fetch segments as `video/mp2t` (sync `0x47`). **VLC** and **MPV** play the direct CDN `.m3u8` with no extra headers. Proxy not required for PLAYER 5 tools. Some channels' casting iframe points at an upstream embed that 404s (channel 51 at the time of writing) — a site gap surfaced as an error, not a silent success.
 
 </details>
 
 <details>
 <summary><b>PLAYER 6 — <code>player</code> (wideiptv → bluetier)</b></summary>
 
-Embed is `wideiptv.top` → `bluetier.top` HLS (master → `tracks-v1a1/mono.m3u8`, plain `.ts`). Playlist and segments accept bare requests (no Referer); VLC/libmpv UAs fetch TS. **VLC** and **MPV** play the direct CDN `.m3u8` with no extra headers. Proxy not required for PLAYER 6 tools.
+Embed is `wideiptv.top` (e.g. `daddy.php?stream=ESPN`) → `bluetier.top` HLS (plain `.ts`, signed `token=` parameter with a wideiptv refresh API). Playlist and segments accept bare requests (no Referer); VLC/libmpv UAs fetch TS. **VLC** and **MPV** play the direct CDN `.m3u8` with no extra headers. Proxy not required for PLAYER 6 tools. Some channels route through a Blogger hop page (`tv-bu1.blogspot.com`) that currently yields no target (channel 51) — again a site gap surfaced as an error.
 
 </details>
 
@@ -241,7 +241,7 @@ DaddyLive exposes several player servers per channel. Each server wraps the real
 1. Loads the player page for one server and one channel ID.
 2. Follows the embed chain until the HTML holds a playable marker.
 3. Decrypts that HTML **offline** — no network inside the decrypt layer.
-4. Returns a direct stream URL, plus a stable **Our Live URL** that rewrites playlists, sends the right referer, refreshes tokens when needed, and unwraps special segment wrappers when they appear.
+4. Returns a direct stream URL, plus a stable **Our Live URL** that rewrites playlists, sends the right referer, refreshes signed tokens when needed, mints playlist tokens for token-gated edges, and unwraps special segment wrappers when they appear.
 
 You watch in the page, or paste a command into VLC or MPV.
 
@@ -255,6 +255,7 @@ Two layers stay separate on purpose:
 After decrypt, `src/proxy/` serves:
 
 - **Proxy** — one-shot fetch of a URL with the right headers; rewrites `.m3u8` lines back through `/api/proxy`; unwraps WebP polyglot segments into MPEG-TS when needed.
+- **Playlist tokens (dembed)** — token-gated edges get a short-lived token minted per playlist fetch (`src/proxy/dembed.ts`), renewed in the background from halfway through its TTL, and invalidated + re-minted on a 403 before the forced re-resolve.
 - **Live session** — one memory entry per `channel:server`. While `expiresAt` is still valid, resolve and live reuse that entry with **no upstream fetch**. On expiry (or force after 401/403): wideiptv uses its token API; otherwise refresh from the **cached embed URL** first (player page skipped), then fall back to a full player → embed resolve. Session meta keeps stable path ids when present (`embedId`, `hlsId`, `premiumId`).
 - **Live playlist** — entry point for the browser player and for tool commands that must go through this host.
 
@@ -284,7 +285,7 @@ channel ID + server
 <details>
 <summary><b>Token rotation & session subtleties</b></summary>
 
-For tiestep (PLAYER 1 / 2), the embed path id and `/hls/{id}` stay fixed; only `?s=` and `?e=` rotate (about six hours). Tokens are **not** shared across channels. Streams without an expiry (for example PLAYER 3 premium paths) stay cached until a forced refresh.
+For the `_econfig` family (PLAYER 2 today; PLAYER 1 in earlier rounds), the embed path id and `/hls/{id}` stay fixed; only `?s=` and `?e=` rotate (about six hours). Tokens are **not** shared across channels. Streams without an expiry (the dembed premium paths, PLAYER 1 / 3) stay cached until a forced refresh — their playlist tokens are minted at fetch time and never stored in the session.
 
 </details>
 
@@ -300,7 +301,7 @@ Resolves one player through the live session (cache hit when the signed URL is s
 
 ### `GET /api/live?channel={id}&server={kind}`
 
-Stable HLS playlist for the browser (and for tools when the profile is not direct-playable). Optional `u` and `v` query params follow rewritten child playlists and variants. Reuses or refreshes the same session as `/api/resolve`, and unwraps segments when they arrive as WebP-wrapped MPEG-TS.
+Stable HLS playlist for the browser (and for tools when the profile is not direct-playable). Optional `u` and `v` query params follow rewritten child playlists and variants. Reuses or refreshes the same session as `/api/resolve`, mints playlist tokens for token-gated edges, and unwraps segments when they arrive as WebP-wrapped MPEG-TS.
 
 ### `GET /api/stream/{id}.m3u8?server={kind}`
 
@@ -366,6 +367,9 @@ type ResolvedStream = {
 | `DLHD_BASE` | `https://dlive.sx` | Origin for watch and player page URLs |
 
 > [!NOTE]
+> The upstream origin rotates (dlive.sx, thedaddy.pk, …). The shipped `docker-compose.yaml` pins `DLHD_BASE=https://thedaddy.pk/`; override it when the player pages move again.
+
+> [!NOTE]
 > No runtime packages are required — TypeScript and `@types/node` are devDependencies only.
 
 ## 📁 Project Structure
@@ -375,7 +379,7 @@ src/
   api/          HTTP server, resolve + live handlers, embed fetch chain
   channels/     watch.php and player page URL builders
   decrypt/      crypto helpers + embed extractors (no fetch)
-  proxy/        playlist rewrite, live session, links, WebP→TS unwrap
+  proxy/        playlist rewrite, live session, links, dembed playlist-token minting, WebP→TS unwrap
   servers/      six player profiles (referer / tools behavior)
   web/          HTML shell, CSS, browser app (hls.js)
   config.ts     DLHD_BASE
@@ -399,7 +403,7 @@ Build output goes to `dist/`.
 ## ⚠️ Limitations
 
 - A channel may omit some player iframes; that is a site gap, not a silent success. Failed resolves stay errors — nothing is invented for missing embeds.
-- Direct CDN links are often signed. Prefer **Our Live URL** for long sessions and sharing. The in-memory session avoids repeat player fetches until expiry; restarting the process clears that cache.
+- Direct CDN links are often signed, and token-gated edges (dembed, PLAYER 1 / 3) cannot be played directly at all — the proxy mints their tokens server-side. Prefer **Our Live URL** for long sessions and sharing. The in-memory session avoids repeat player fetches until expiry; restarting the process clears that cache.
 - Embed chains and CDN rules are third-party and can change without notice — a broken player usually means the upstream embed changed.
 
 ## 🤝 Contributing
