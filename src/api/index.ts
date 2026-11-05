@@ -1,4 +1,5 @@
-import { createServer, type ServerResponse } from "node:http";
+import { createServer, type ServerResponse, type IncomingMessage } from "node:http";
+import { TLSSocket } from "node:tls";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34,13 +35,18 @@ function send(
   res.end(buf);
 }
 
+function getProtocol(req : IncomingMessage) {
+  return req.headers["x-forwarded-proto"]?.toString().split(",")[0].trim() ??
+  (req.socket instanceof TLSSocket ? "https" : "http");
+}
+
 createServer(async (req, res) => {
   try {
     if (req.method !== "GET") {
       send(res, 405, "method not allowed", "text/plain");
       return;
     }
-    const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+    const url = new URL(req.url ?? "/", `${getProtocol(req)}://${req.headers.host ?? "localhost"}`);
     if (url.pathname === "/api/proxy") {
       const result = await proxyStream(url.searchParams, url.origin);
       send(res, result.status, result.body, result.type, result.headers);
