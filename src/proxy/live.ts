@@ -113,6 +113,9 @@ async function playlistFetchTarget(session: LiveSession, target: string): Promis
   const dembed = dembedOf(session);
   if (!dembed || !target.startsWith(dembed.edge)) return bustPlaylistUrl(target);
   const token = await dembedPlaylistToken(dembed.edge, dembed.slug, session.referer);
+  if (!token) {
+    throw new Error("dembed token required (Turnstile verification required)");
+  }
   return withDembedParams(target, token);
 }
 

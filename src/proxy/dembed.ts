@@ -8,6 +8,7 @@ type EdgeToken = {
 };
 
 const tokens = new Map<string, EdgeToken>();
+const blockedUntil = new Map<string, number>();
 
 function keyOf(edge: string, slug: string): string {
   return `${edge}|${slug}`;
@@ -25,6 +26,10 @@ function trackInflight(entry: EdgeToken, p: Promise<string | null>): Promise<str
 }
 
 async function mint(edge: string, slug: string, referer: string): Promise<string | null> {
+  const key = keyOf(edge, slug);
+  const blocked = blockedUntil.get(key);
+  if (blocked && Date.now() < blocked) return null;
+
   let origin: string;
   try {
     origin = new URL(referer).origin;
@@ -34,13 +39,21 @@ async function mint(edge: string, slug: string, referer: string): Promise<string
   const res = await fetch(`${edge}/api/playlist-token?slug=${encodeURIComponent(slug)}`, {
     headers: { "User-Agent": UA, Origin: origin, Referer: referer },
     signal: AbortSignal.timeout(4000),
-  });
-  if (!res.ok) return null;
+  }).catch(() => null);
+
+  if (!res || !res.ok) {
+    blockedUntil.set(key, Date.now() + 5 * 60 * 1000);
+    return null;
+  }
   const data = (await res.json().catch(() => null)) as { token?: string; ttl?: number } | null;
-  if (!data?.token) return null;
+  if (!data?.token) {
+    blockedUntil.set(key, Date.now() + 5 * 60 * 1000);
+    return null;
+  }
+  blockedUntil.delete(key);
   const ttl = Math.max(20, Number(data.ttl) || 120);
   const now = Date.now();
-  tokens.set(keyOf(edge, slug), {
+  tokens.set(key, {
     value: data.token,
     renewAt: now + ttl * 500,
     expiresAt: now + ttl * 1000 - 2000,

@@ -588,7 +588,7 @@ const selectServer = async (server: ServerKind, opts: SelectOpts = {}) => {
       setOverlay(null);
     } catch {
       if (!live()) return;
-      upsertServer({ ...data, resolveMs, ok: true });
+      upsertServer({ ...data, resolveMs, ok: false, error: "Playback failed" });
       paintServers();
       if (tryNextServer(server, opts)) return;
       setOverlay("error", "Playback failed. Try another server.");
@@ -987,7 +987,7 @@ ui.tabEvents?.addEventListener("click", () => switchPanel("events"));
 ui.servers?.addEventListener("click", (event) => {
   const btn = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-server]");
   if (!btn?.dataset.server || btn.disabled) return;
-  void selectServer(btn.dataset.server as ServerKind);
+  void selectServer(btn.dataset.server as ServerKind, { fallback: true });
 });
 
 // "/" jumps to the search box of the visible panel (unless already typing somewhere).

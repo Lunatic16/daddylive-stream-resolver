@@ -17,7 +17,8 @@ import {
   streamReferer,
   type ResolveFns,
 } from "../proxy/session.js";
-import { playerLabel, serverProfile, type ServerKind } from "../servers/index.js";
+import { playerLabel, serverProfile, PLAYER_IDS, type ServerKind } from "../servers/index.js";
+import type { ProxyResult } from "../proxy/stream.js";
 import { fetchEmbedHtmlChain } from "./fetch.js";
 
 async function channelTitle(channelId: number): Promise<string> {
@@ -174,19 +175,67 @@ export async function handleLivePlaylist(
   childUrl: string | null,
   variant: number | null,
 ) {
-  const result = await proxyLivePlaylist(
-    channelId,
-    server,
-    origin,
-    resolveFns(channelId, server),
-    childUrl,
-    variant,
-  );
-  const buf = Buffer.isBuffer(result.body) ? result.body : Buffer.from(result.body);
-  res.writeHead(result.status, {
-    "Content-Type": result.type,
-    "Content-Length": buf.byteLength,
-    ...result.headers,
-  });
-  res.end(buf);
+  if (childUrl) {
+    const result = await proxyLivePlaylist(
+      channelId,
+      server,
+      origin,
+      resolveFns(channelId, server),
+      childUrl,
+      variant,
+    );
+    const buf = Buffer.isBuffer(result.body) ? result.body : Buffer.from(result.body);
+    res.writeHead(result.status, {
+      "Content-Type": result.type,
+      "Content-Length": buf.byteLength,
+      ...result.headers,
+    });
+    res.end(buf);
+    return;
+  }
+
+  const candidateServers = [server, ...PLAYER_IDS.filter((s) => s !== server)];
+  let lastResult: ProxyResult | null = null;
+
+  for (const s of candidateServers) {
+    try {
+      const result = await proxyLivePlaylist(
+        channelId,
+        s,
+        origin,
+        resolveFns(channelId, s),
+        null,
+        variant,
+      );
+      if (result.status < 400) {
+        const buf = Buffer.isBuffer(result.body) ? result.body : Buffer.from(result.body);
+        res.writeHead(result.status, {
+          "Content-Type": result.type,
+          "Content-Length": buf.byteLength,
+          ...result.headers,
+        });
+        res.end(buf);
+        return;
+      }
+      lastResult = result;
+    } catch {
+      // Continue to next candidate server
+    }
+  }
+
+  if (lastResult) {
+    const buf = Buffer.isBuffer(lastResult.body) ? lastResult.body : Buffer.from(lastResult.body);
+    res.writeHead(lastResult.status, {
+      "Content-Type": lastResult.type,
+      "Content-Length": buf.byteLength,
+      ...lastResult.headers,
+    });
+    res.end(buf);
+  } else {
+    res.writeHead(502, {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Access-Control-Allow-Origin": "*",
+    });
+    res.end("All stream servers failed for channel " + channelId);
+  }
 }

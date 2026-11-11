@@ -8,7 +8,7 @@ import type { ServerProfile } from "./types.js";
 import { watchServer } from "./watch.js";
 
 export type { ServerProfile, ServerTransport, RefererMode } from "./types.js";
-export { PLAYERS, PLAYER_IDS, playerLabel, type ServerKind } from "./kinds.js";
+export { PLAYERS, PLAYER_IDS, playerLabel, DEFAULT_SERVER, type ServerKind } from "./kinds.js";
 
 const SERVER_PROFILES: Record<ServerKind, ServerProfile> = {
   stream: streamServer,

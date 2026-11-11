@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { PLAYER_IDS, type ServerKind } from "../servers/kinds.js";
+import { DEFAULT_SERVER, PLAYER_IDS, type ServerKind } from "../servers/kinds.js";
 import { proxyStream } from "../proxy/stream.js";
 import { renderPage } from "../web/page.js";
 import { handleLivePlaylist, handleResolveOne } from "./resolve.js";
@@ -83,11 +83,10 @@ createServer(async (req, res) => {
         send(res, 400, "channel required", "text/plain");
         return;
       }
-      if (!serverParam || !PLAYER_IDS.includes(serverParam as ServerKind)) {
-        send(res, 400, "server required", "text/plain");
-        return;
-      }
-      await handleResolveOne(res, channelId, serverParam as ServerKind, url.origin);
+      const server = serverParam && PLAYER_IDS.includes(serverParam as ServerKind)
+        ? (serverParam as ServerKind)
+        : DEFAULT_SERVER;
+      await handleResolveOne(res, channelId, server, url.origin);
       return;
     }
     if (url.pathname === "/api/events") {
@@ -124,7 +123,7 @@ createServer(async (req, res) => {
       const serverParam = url.searchParams.get("server");
       const server = serverParam && PLAYER_IDS.includes(serverParam as ServerKind)
         ? (serverParam as ServerKind)
-        : undefined;
+        : DEFAULT_SERVER;
       const channels = await fetchChannelList();
       const m3u8 = generateM3u8Playlist(channels, url.origin, server);
       send(
@@ -143,7 +142,7 @@ createServer(async (req, res) => {
     const streamMatch = url.pathname.match(/^\/api\/stream\/(\d+)\.m3u8$/);
     if (streamMatch) {
       const channelId = Number(streamMatch[1]);
-      const serverParam = url.searchParams.get("server") ?? "stream";
+      const serverParam = url.searchParams.get("server") ?? DEFAULT_SERVER;
       if (!PLAYER_IDS.includes(serverParam as ServerKind)) {
         send(res, 400, "invalid server", "text/plain");
         return;

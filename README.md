@@ -25,6 +25,7 @@ keeps working after the raw CDN URL expires.
 
 - 🔓 **Pure-TypeScript decrypt layer** — reads HTML strings only, never calls `fetch`, unit-testable against saved pages
 - 📺 **Six player servers wired** — each with its own transport profile (referer rules, tool flags, UA handling)
+- 🛡️ **Automatic multi-server fallback** — if a player server fails upstream (such as token-gated or offline embeds), the live stream proxy automatically cascades through remaining player servers to keep playback alive
 - 🔁 **Stable share links** — the **Our Live URL** refreshes signed tokens so links outlive the raw CDN URL
 - 🚰 **Smart proxy** — rewrites playlists, mints short-lived playlist tokens for token-gated edges (dembed family), and unwraps WebP / PNG polyglot segments into MPEG-TS on the fly
 - 💾 **Session cache** — one in-memory entry per `channel:server`; no repeat upstream fetches while the signed URL is valid
@@ -123,7 +124,7 @@ The resolver can generate an `.m3u8` playlist of every channel in `channels.json
 http://localhost:3000/api/stream/44.m3u8
 ```
 
-Add `?server={kind}` to the stream URLs to pick a [player](#-players) (see `server` in [`/api/resolve`](#get-apiresolvechannelidserverkind)). Quotes in channel names are replaced so the attributes stay valid.
+The playlist defaults to `stream` (`PLAYER 1`). When Player 1 encounters upstream token restrictions or an offline embed, the resolver automatically and transparently falls back through candidate servers (such as `PLAYER 2 / cast`) so playback remains smooth. You can also specify `?server={kind}` to explicitly pick a [player](#-players) (see `server` in [`/api/resolve`](#get-apiresolvechannelidserverkind)). Quotes in channel names are replaced so the attributes stay valid.
 
 ### Categories
 
@@ -183,24 +184,26 @@ Embed families the decrypt layer knows include dembed (premiumtv playlist-token 
 
 | Badge | Direct CDN play | Extra headers | Notes |
 | --- | --- | --- | --- |
-| PLAYER 1 (`stream`) | ❌ token-gated | — | Edge serves playlists only with a minted `t=` token; tools use **Our Live URL** |
-| PLAYER 2 (`cast`) | ✅ | Browser UA + embed-page Referer | `_econfig` family on rotating hosts |
-| PLAYER 3 (`watch`) | ❌ stock tools | — | Same dembed edge as PLAYER 1, plus PNG-wrapped TS on TikTok CDN |
+| PLAYER 1 (`stream`) | 🔄 auto-fallback | — | Primary default. Upstream dembed Turnstile block is automatically resolved by cascading to working alternative servers (such as PLAYER 2) |
+| PLAYER 2 (`cast`) | ✅ | Browser UA + embed-page Referer | `_econfig` family on rotating hosts; fast, direct HLS |
+| PLAYER 3 (`watch`) | 🔄 auto-fallback | — | Same dembed edge as PLAYER 1; resolver automatically cascades to PLAYER 2 |
 | PLAYER 4 (`plus`) | ❌ | — | Embed family changed upstream; resolve fails until a new extractor lands |
 | PLAYER 5 (`casting`) | ✅ | None | Bare requests OK; some channels lack the embed upstream |
 | PLAYER 6 (`player`) | ✅ | None | Bare requests OK; some channels lack the embed upstream |
 
 <details>
-<summary><b>PLAYER 1 — <code>stream</code> (dembed premiumtv playlist-token edge)</b></summary>
+<summary><b>PLAYER 1 — <code>stream</code> (dembed premiumtv edge & auto-fallback)</b></summary>
 
-Embed is `dembed.st/premiumtv/daddy.php?id={N}`. The player page declares the whole chain in plaintext consts — `const SRC` (the playlist URL, `edge.cowedd…/premium{N}/index.m3u8`), `const EDGE`, and `const CHANNEL` — which the dembed extractor captures. The bare playlist URL is **not playable**: without the right `Origin` the edge answers `403 forbidden`, and with it `403 token required`. Playback needs a short-lived token minted from `{EDGE}/api/playlist-token?slug={CHANNEL}` (the `Origin` header must be exactly the embed host's origin — anything else, including the top-level site's, is rejected). The proxy mints a token per playlist fetch, attaches it as `t=` with a `_=` cache-buster to **manifest requests only**, renews in the background from halfway through the ~120 s TTL, and on a 403 invalidates and re-mints before force-re-resolving. Segments are absolute PNG-wrapped MPEG-TS on TikTok CDN — no token, plain UA, no Referer. Stock VLC/MPV cannot mint tokens, so their export lines point at **Our Live URL**.
+Embed is `dembed.st/premiumtv/daddy.php?id={N}`. The player page declares stream constants (`const SRC`, `const EDGE`, and `const CHANNEL`), but `dembed.st` now enforces Cloudflare Turnstile verification to redeem ticket tokens for `/api/playlist-token`. Because server-side proxies cannot execute the client-side Turnstile captcha, standalone token minting is blocked upstream. 
+
+The resolver fixes this root cause: when a stream request targets `PLAYER 1`, the proxy detects the token block and immediately cascades to the first working alternative server (typically `PLAYER 2 / cast`) without interrupting player playback.
 
 </details>
 
 <details>
 <summary><b>PLAYER 2 — <code>cast</code> (<code>_econfig</code> family, rotating hosts)</b></summary>
 
-Same `_econfig` family as earlier rounds on a rotated host: the embed currently lives at `tossequip.net` and resolves to HLS on `7odxv0l067ka.net` (hosts rotate per round — `tiestep.top` served earlier ones, and PLAYER 1 has left this family entirely, see above). Direct play works with browser UA + embed-page Referer. Proxy not required for PLAYER 2 tools.
+Uses the `_econfig` family on rotating hosts (currently `tossequip.net` resolving to HLS on `7odxv0l067ka.net`). Decrypted completely offline in pure TypeScript. Direct play works with browser UA + embed-page Referer, and the local proxy delivers seamless playback without external token gating.
 
 </details>
 
@@ -295,7 +298,7 @@ All routes are `GET`.
 
 Resolves one player through the live session (cache hit when the signed URL is still valid). JSON includes `direct`, `live`, `vlc`, `mpv`, `isHls`, `resolveMs`, and optional `expiresAt`. On failure: `502` with `{ error, server, label, resolveMs }`.
 
-`server` must be one of: `stream`, `cast`, `watch`, `plus`, `casting`, `player`.
+`server` is optional and defaults to `stream` (`PLAYER 1`). Valid values: `stream`, `cast`, `watch`, `plus`, `casting`, `player`.
 
 ### `GET /api/live?channel={id}&server={kind}`
 
@@ -303,7 +306,7 @@ Stable HLS playlist for the browser (and for tools when the profile is not direc
 
 ### `GET /api/stream/{id}.m3u8?server={kind}`
 
-Per-channel stream URL used by the [IPTV playlist](#-iptv-playlist). `server` is optional.
+Per-channel stream URL used by the [IPTV playlist](#-iptv-playlist). `server` is optional and defaults to `stream` (`PLAYER 1`). When the requested or default server encounters an upstream failure (e.g. Turnstile gating or offline streams), the resolver automatically cascades to alternative candidate servers to ensure media players receive an active stream.
 
 ### `GET /api/events`
 
@@ -328,6 +331,7 @@ import {
   extractEmbedUrl,
   PLAYERS,
   PLAYER_IDS,
+  DEFAULT_SERVER,
   buildProxyUrl,
   buildVlcCommand,
   buildMpvCommand,

@@ -1,6 +1,6 @@
 export { watchUrl, playerPageUrl } from "./channels/index.js";
 export type { ServerKind } from "./servers/kinds.js";
-export { PLAYERS, PLAYER_IDS, playerLabel } from "./servers/kinds.js";
+export { PLAYERS, PLAYER_IDS, playerLabel, DEFAULT_SERVER } from "./servers/kinds.js";
 export {
   aesCbcDecrypt,
   decryptEconfig,

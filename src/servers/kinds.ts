@@ -10,6 +10,7 @@ export const PLAYERS = [
 export type ServerKind = (typeof PLAYERS)[number]["id"];
 
 export const PLAYER_IDS: ServerKind[] = PLAYERS.map((player) => player.id);
+export const DEFAULT_SERVER: ServerKind = "stream";
 
 export function playerLabel(server: ServerKind): string {
   return PLAYERS.find((player) => player.id === server)?.label ?? server;
