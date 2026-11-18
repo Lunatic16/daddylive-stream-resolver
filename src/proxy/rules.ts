@@ -25,6 +25,12 @@ export function upstreamRuleFor(playableUrl: string): UpstreamRule {
   if (/tiktokcdn/i.test(host)) {
     return { refererMode: "omit", rewritePlaylist: true };
   }
+  if (/biboguv|matchora/i.test(host)) {
+    return { refererMode: "required", rewritePlaylist: true };
+  }
+  if (/sytes\.net|ehgembxe/i.test(host)) {
+    return { refererMode: "required", forceReferer: "https://ehgembxe.cfd/", rewritePlaylist: true };
+  }
   return { refererMode: "optional", rewritePlaylist: true };
 }
 

@@ -149,6 +149,178 @@ function unwrapPixels(buf: Buffer): Buffer | null {
   return ts.length && ts[0] === 0x47 ? ts : null;
 }
 
+function unwrapMatchoraPng(buf: Buffer): Buffer | null {
+  if (buf.length < 24 || buf[0] !== 0x89 || buf[1] !== 0x50 || buf[2] !== 0x4e || buf[3] !== 0x47) return null;
+  const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  let off = 8;
+  const parts: { i: number; c: number; d: Buffer }[] = [];
+  while (off + 12 <= buf.length) {
+    const s = off + 8;
+    const len = dv.getUint32(off);
+    const e = s + len;
+    if (e + 4 > buf.length) break;
+    const type = buf.subarray(off + 4, s).toString("ascii");
+    if (type === "iTXt") {
+      const z = buf.indexOf(0, s);
+      if (z > s && z < e) {
+        const keyword = buf.subarray(s, z).toString("ascii");
+        if (keyword.startsWith("payload-")) {
+          const idx = parseInt(keyword.slice(8), 10);
+          const compressed = buf[z + 1];
+          const langEnd = buf.indexOf(0, z + 3);
+          const transEnd = buf.indexOf(0, langEnd + 1);
+          const d = buf.subarray(transEnd + 1, e);
+          parts.push({ i: idx, c: compressed, d });
+        }
+      }
+    }
+    off = e + 4;
+  }
+  if (!parts.length) return null;
+  parts.sort((a, b) => a.i - b.i);
+  let b64 = "";
+  for (const p of parts) {
+    try {
+      const raw = p.c ? inflateSync(p.d) : p.d;
+      b64 += raw.toString("ascii");
+    } catch {
+      return null;
+    }
+  }
+  try {
+    const ts = Buffer.from(b64, "base64");
+    return ts.length > 0 && ts[0] === 0x47 ? ts : null;
+  } catch {
+    return null;
+  }
+}
+
+function unwrapKwp1Png(buf: Buffer): Buffer | null {
+  if (buf.length < 24 || buf[0] !== 0x89 || buf[1] !== 0x50 || buf[2] !== 0x4e || buf[3] !== 0x47) {
+    return null;
+  }
+  let pos = 8;
+  let w = 0;
+  let h = 0;
+  let bitDepth = 0;
+  let colorType = 0;
+  let interlace = 0;
+  let kwln = -1;
+  const idatParts: Buffer[] = [];
+  let idatTotal = 0;
+
+  while (pos + 12 <= buf.length) {
+    const len = buf.readUInt32BE(pos);
+    const type = buf.subarray(pos + 4, pos + 8).toString("ascii");
+    const dStart = pos + 8;
+    const dEnd = dStart + len;
+    if (dEnd + 4 > buf.length) break;
+
+    if (type === "IHDR") {
+      w = buf.readUInt32BE(dStart);
+      h = buf.readUInt32BE(dStart + 4);
+      bitDepth = buf[dStart + 8];
+      colorType = buf[dStart + 9];
+      interlace = buf[dStart + 12];
+    } else if (type === "kwLn" && len === 4) {
+      kwln = buf.readUInt32BE(dStart);
+    } else if (type === "IDAT") {
+      idatParts.push(buf.subarray(dStart, dEnd));
+      idatTotal += len;
+    } else if (type === "IEND") {
+      break;
+    }
+    pos = dEnd + 4;
+  }
+
+  if (bitDepth !== 8 || interlace !== 0 || !w || !h) return null;
+  const bppMap: Record<number, number> = { 0: 1, 2: 3, 4: 2, 6: 4 };
+  const bpp = bppMap[colorType];
+  if (!bpp) return null;
+
+  let raw: Buffer;
+  try {
+    raw = inflateSync(Buffer.concat(idatParts, idatTotal));
+  } catch {
+    return null;
+  }
+
+  const stride = w * bpp;
+  const out = Buffer.allocUnsafe(h * stride);
+  let prev = Buffer.alloc(stride);
+  let fi = 0;
+
+  for (let y = 0; y < h; y++) {
+    if (fi >= raw.length) return null;
+    const filter = raw[fi++];
+    const row = raw.subarray(fi, fi + stride);
+    fi += stride;
+    const dest = out.subarray(y * stride, (y + 1) * stride);
+    if (filter === 0) {
+      row.copy(dest);
+    } else if (filter === 1) {
+      for (let i = 0; i < stride; i++) {
+        dest[i] = (row[i] + (i >= bpp ? dest[i - bpp] : 0)) & 0xff;
+      }
+    } else if (filter === 2) {
+      for (let i = 0; i < stride; i++) {
+        dest[i] = (row[i] + prev[i]) & 0xff;
+      }
+    } else if (filter === 3) {
+      for (let i = 0; i < stride; i++) {
+        dest[i] = (row[i] + (((i >= bpp ? dest[i - bpp] : 0) + prev[i]) >> 1)) & 0xff;
+      }
+    } else if (filter === 4) {
+      for (let i = 0; i < stride; i++) {
+        dest[i] = (row[i] + paeth(i >= bpp ? dest[i - bpp] : 0, prev[i], i >= bpp ? prev[i - bpp] : 0)) & 0xff;
+      }
+    } else {
+      return null;
+    }
+    prev = dest;
+  }
+
+  let payload = out;
+  if (colorType === 4 || colorType === 6) {
+    const keep = colorType === 4 ? 1 : 3;
+    const stripped = Buffer.allocUnsafe(w * h * keep);
+    for (let i = 0, j = 0; i < payload.length; i += bpp, j += keep) {
+      for (let k = 0; k < keep; k++) {
+        stripped[j + k] = payload[i + k];
+      }
+    }
+    payload = stripped;
+  }
+
+  if (kwln >= 0 && kwln <= payload.length) {
+    payload = payload.subarray(0, kwln);
+  }
+
+  if (
+    payload.length >= 8 &&
+    payload[0] === 0x4b &&
+    payload[1] === 0x57 &&
+    payload[2] === 0x50 &&
+    payload[3] === 0x31
+  ) {
+    const dataLen = payload.readUInt32BE(4);
+    if (8 + dataLen <= payload.length) {
+      const seg = payload.subarray(8, 8 + dataLen);
+      return seg.length > 0 && seg[0] === 0x47 ? seg : null;
+    }
+  }
+
+  if (payload.length >= 188 && payload[0] === 0x47) {
+    let end = Math.floor(payload.length / 188) * 188;
+    while (end >= 376 && (payload[end - 188] !== 0x47 || payload[end - 376] !== 0x47)) {
+      end -= 188;
+    }
+    return end > 0 ? payload.subarray(0, end) : payload;
+  }
+
+  return null;
+}
+
 function markerPayload(buf: Buffer, marker: Buffer): Buffer | null {
   for (let i = 0; i + marker.length < buf.length; i++) {
     if (!buf.subarray(i, i + marker.length).equals(marker)) continue;
@@ -177,6 +349,8 @@ export function unwrapWebpMpegTs(buf: Buffer): Buffer | null {
   return (
     webpExifTs(buf) ??
     pngIendTs(buf) ??
+    unwrapMatchoraPng(buf) ??
+    unwrapKwp1Png(buf) ??
     unwrapPixels(buf) ??
     markerPayload(buf, TRAW) ??
     markerPayload(buf, TSGZ) ??

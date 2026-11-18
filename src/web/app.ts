@@ -1,4 +1,4 @@
-type ServerKind = "stream" | "cast" | "watch" | "plus" | "casting" | "player";
+type ServerKind = "stream" | "cast" | "watch" | "plus" | "casting" | "player" | "hub";
 
 type ServerExport = {
   server: ServerKind;

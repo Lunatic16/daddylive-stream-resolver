@@ -1,4 +1,4 @@
-import { extractPlayableFromHtml } from "./extractors/embed.js";
+import { extractPlayableFromHtml, extractAsyncPlayable } from "./extractors/embed.js";
 import type { ResolvedStream, ServerKind } from "./types.js";
 
 export type ResolveContext = {
@@ -7,10 +7,14 @@ export type ResolveContext = {
   embedUrl: string;
 };
 
-export function resolveFromHtml(embedHtml: string, ctx: ResolveContext): ResolvedStream {
+export async function resolveFromHtml(embedHtml: string, ctx: ResolveContext): Promise<ResolvedStream> {
   const resolved = extractPlayableFromHtml(embedHtml);
-  if (!resolved) {
-    throw new Error(`no playable stream in ${ctx.server} embed`);
+  if (resolved) {
+    return { ...ctx, ...resolved };
   }
-  return { ...ctx, ...resolved };
+  const asyncResolved = await extractAsyncPlayable(embedHtml, ctx.embedUrl);
+  if (asyncResolved) {
+    return { ...ctx, ...asyncResolved };
+  }
+  throw new Error(`no playable stream in ${ctx.server} embed`);
 }

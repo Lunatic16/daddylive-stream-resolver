@@ -164,7 +164,7 @@ Anything unmatched falls back to `Entertainment - USA Cable`, so add a rule when
 
 ## 📺 Players
 
-Six DaddyLive player routes are wired. Each maps to a path like `/{server}/stream-{id}.php` on the upstream site (dlive.sx / thedaddy.pk):
+Seven DaddyLive player routes are wired. Each maps to a path like `/{server}/stream-{id}.php` on the upstream site (dlive.sx / thedaddy.pk):
 
 | Badge | Server ID | Path |
 | --- | --- | --- |
@@ -174,64 +174,66 @@ Six DaddyLive player routes are wired. Each maps to a path like `/{server}/strea
 | PLAYER 4 | `plus` | `/plus/stream-{id}.php` |
 | PLAYER 5 | `casting` | `/casting/stream-{id}.php` |
 | PLAYER 6 | `player` | `/player/stream-{id}.php` |
+| PLAYER 7 | `hub` | `/hub/stream-{id}.php` |
 
 > [!NOTE]
 > Not every channel exposes every embed. If a page has no iframe, resolve fails with a clear error for that badge only — failed resolves stay errors, nothing is invented for missing embeds.
 
-Embed families the decrypt layer knows include dembed (premiumtv playlist-token edges, PLAYER 1 / 3), tiestep (`_econfig`), epiembeds (XOR arrays), wideiptv, cdnlivetv, daddy3, hub / livelive24 WebM, and related hop pages (wikisport, blogger-player). Transport rules per server live under `src/servers/` (referer required / optional / omitted, separate VLC/MPV flags for direct CDN vs Our Live URL, optional browser User-Agent for tools).
+Embed families the decrypt layer knows include dembed (premiumtv playlist-token edges, PLAYER 1 / 3 / 7), tiestep (`_econfig`), epiembeds / ehgembxe (XOR ticket unpacker), matchora (page pass), wideiptv, cdnlivetv, daddy3, hub / livelive24 WebM, and related hop pages (wikisport, blogger-player). Transport rules per server live under `src/servers/` (referer required / optional / omitted, separate VLC/MPV flags for direct CDN vs Our Live URL, optional browser User-Agent for tools).
 
 ### Transport at a glance
 
 | Badge | Direct CDN play | Extra headers | Notes |
 | --- | --- | --- | --- |
-| PLAYER 1 (`stream`) | 🔄 auto-fallback | — | Primary default. Upstream dembed Turnstile block is automatically resolved by cascading to working alternative servers (such as PLAYER 2) |
+| PLAYER 1 (`stream`) | 🔄 auto-fallback | — | Primary default. Upstream dembed Turnstile block is automatically resolved by cascading to working alternative servers (such as PLAYER 2, 4, or 5) |
 | PLAYER 2 (`cast`) | ✅ | Browser UA + embed-page Referer | `_econfig` family on rotating hosts; fast, direct HLS |
-| PLAYER 3 (`watch`) | 🔄 auto-fallback | — | Same dembed edge as PLAYER 1; resolver automatically cascades to PLAYER 2 |
-| PLAYER 4 (`plus`) | ❌ | — | Embed family changed upstream; resolve fails until a new extractor lands |
-| PLAYER 5 (`casting`) | ✅ | None | Bare requests OK; some channels lack the embed upstream |
-| PLAYER 6 (`player`) | ✅ | None | Bare requests OK; some channels lack the embed upstream |
+| PLAYER 3 (`watch`) | 🔄 auto-fallback | — | Same dembed edge as PLAYER 1; resolver automatically cascades to working alternative servers |
+| PLAYER 4 (`plus`) | 🔄 via relay | Required (embed Referer) | `ehgembxe.cfd` with rotating XOR ticket unpacker → `tims-001.sytes.net` with `KWP1`/`kwLn` pixel-packed PNG segment decoding |
+| PLAYER 5 (`casting`) | 🔄 via relay | Required (embed Referer) | `matchora.to` with stamped page pass (`PP`) → `e.biboguv.cyou` with `iTXt` payload chunk PNG segment decoding |
+| PLAYER 6 (`player`) | ✅ | None | `wideiptv` family; subject to upstream streamer IP restrictions on some channels |
+| PLAYER 7 (`hub`) | 🔄 auto-fallback | — | Hub stream route (dembed or AES-CBC encrypted hub config); resolver auto-cascades if blocked |
 
 <details>
 <summary><b>PLAYER 1 — <code>stream</code> (dembed premiumtv edge & auto-fallback)</b></summary>
 
 Embed is `dembed.st/premiumtv/daddy.php?id={N}`. The player page declares stream constants (`const SRC`, `const EDGE`, and `const CHANNEL`), but `dembed.st` now enforces Cloudflare Turnstile verification to redeem ticket tokens for `/api/playlist-token`. Because server-side proxies cannot execute the client-side Turnstile captcha, standalone token minting is blocked upstream. 
 
-The resolver fixes this root cause: when a stream request targets `PLAYER 1`, the proxy detects the token block and immediately cascades to the first working alternative server (typically `PLAYER 2 / cast`) without interrupting player playback.
+The resolver fixes this root cause: when a stream request targets `PLAYER 1`, the proxy detects the token block and immediately cascades through the working alternative servers (`cast`, `plus`, `casting`) without interrupting player playback.
 
 </details>
 
 <details>
 <summary><b>PLAYER 2 — <code>cast</code> (<code>_econfig</code> family, rotating hosts)</b></summary>
 
-Uses the `_econfig` family on rotating hosts (currently `tossequip.net` resolving to HLS on `7odxv0l067ka.net`). Decrypted completely offline in pure TypeScript. Direct play works with browser UA + embed-page Referer, and the local proxy delivers seamless playback without external token gating.
+Uses the `_econfig` family on rotating hosts (e.g. `tossequip.net` / `waterera.net` resolving to HLS on `7odxv0l067ka.net`). Decrypted completely offline in pure TypeScript. Direct play works with browser UA + embed-page Referer, and the local proxy delivers seamless playback without external token gating.
 
 </details>
 
 <details>
-<summary><b>PLAYER 3 — <code>watch</code> (PNG-wrapped TS on TikTok CDN)</b></summary>
+<summary><b>PLAYER 3 — <code>watch</code> (dembed edge & auto-fallback)</b></summary>
 
-Upstream is the same dembed premiumtv edge as PLAYER 1 — a sliding live window (`edge.cowedd…/premium{N}/index.m3u8`) whose playlists are token-gated (the proxy mints them, see PLAYER 1) and whose media lines are PNG-wrapped MPEG-TS on TikTok CDN (`TIKTIKPX`). Stock VLC/MPV on the CDN URL fail. Our Live URL must **not** append `#EXT-X-ENDLIST` (that turned live into VOD and stopped after a few seconds). Match the embed player: strip `#EXT-X-PROGRAM-DATE-TIME`, unwrap segments in the proxy, cache immutable TikTok URLs (coalesced, max 2 upstream fetches), and use the embed hls.js live buffer settings (`lowLatencyMode: false`, `liveSyncDurationCount: 4`).
-
-</details>
-
-<details>
-<summary><b>PLAYER 4 — <code>plus</code> (embed changed upstream — currently unresolvable)</b></summary>
-
-The old WebP-EXIF family no longer serves this badge. The embed now 302-redirects to a JWT-path player (`…/play/eyJhbG…`) that none of the extractors match, so resolve returns `no playable stream in plus embed` on every channel tried. The WebP-EXIF unwrapper is still in the proxy for any source that returns that shape. A new extractor is needed once the family settles.
+Upstream is the same dembed premiumtv edge as PLAYER 1 — a sliding live window whose playlists are token-gated by Cloudflare Turnstile. The resolver automatically cascades to working alternative servers.
 
 </details>
 
 <details>
-<summary><b>PLAYER 5 — <code>casting</code> (cdnlivetv)</b></summary>
+<summary><b>PLAYER 4 — <code>plus</code> (<code>ehgembxe.cfd</code> & <code>KWP1</code> PNG unpacking)</b></summary>
 
-Embed is `api.cdnlivetv.tv` (base64-chunk playlist URL + token). Playlist and `.ts` segments accept bare requests (no Referer). VLC's default UA and browser UA both fetch segments as `video/mp2t` (sync `0x47`). **VLC** and **MPV** play the direct CDN `.m3u8` with no extra headers. Proxy not required for PLAYER 5 tools. Some channels' casting iframe points at an upstream embed that 404s (channel 51 at the time of writing) — a site gap surfaced as an error, not a silent success.
+Embed is `ehgembxe.cfd/{hash}`. The player bytecode is packed inside a rotating XOR array (`((val ^ xor) - sub + 256) % 256`) containing `CFG.ticketUrl = https://tims-001.sytes.net/p/{hex}`. The resolver fetches the binary ticket and XOR-unpacks it (`b[i] ^ tk[(i-1)%32] ^ ((seed + i - 1) & 255)`) to derive the live master playlist on `tims-001.sytes.net`. Media segments are camouflaged as PNG images on TikTok CDN and decoded via the `KWP1` / `kwLn` pixel unpacker into MPEG-TS (`0x47`).
 
 </details>
 
 <details>
-<summary><b>PLAYER 6 — <code>player</code> (wideiptv → bluetier)</b></summary>
+<summary><b>PLAYER 5 — <code>casting</code> (<code>matchora.to</code> & <code>iTXt</code> PNG unpacking)</b></summary>
 
-Embed is `wideiptv.top` (e.g. `daddy.php?stream=ESPN`) → `bluetier.top` HLS (plain `.ts`, signed `token=` parameter with a wideiptv refresh API). Playlist and segments accept bare requests (no Referer); VLC/libmpv UAs fetch TS. **VLC** and **MPV** play the direct CDN `.m3u8` with no extra headers. Proxy not required for PLAYER 6 tools. Some channels route through a Blogger hop page (`tv-bu1.blogspot.com`) that currently yields no target (channel 51) — again a site gap surfaced as an error.
+Embed is `matchora.to/embed/channel/{id}`. Stamped with a rotating page-pass (`PP="..."`). The resolver queries `/api/play/{id}?pp={PP}` to mint the signed manifest on `e.biboguv.cyou`. Live segments are camouflaged as PNG images on TikTok CDN carrying compressed `iTXt` chunks (`payload-0`, `payload-1`, ...). The proxy inflates the chunks, concatenates the base64 stream, and delivers genuine MPEG-TS (`0x47`).
+
+</details>
+
+<details>
+<summary><b>PLAYER 6 — <code>player</code> (wideiptv → cdn.hdm1.net)</b></summary>
+
+Embed is `tv-bu1.blogspot.com` → `wideiptv.top` (e.g. `daddy.php?stream=ESPN`) → `cdn.hdm1.net` HLS. Resolved via Clappr iframe unwrapping and token extraction; playback depends on whether upstream CDN IP restrictions apply.
 
 </details>
 

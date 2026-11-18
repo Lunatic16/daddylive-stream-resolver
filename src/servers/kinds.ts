@@ -5,6 +5,7 @@ export const PLAYERS = [
   { id: "plus", label: "PLAYER 4" },
   { id: "casting", label: "PLAYER 5" },
   { id: "player", label: "PLAYER 6" },
+  { id: "hub", label: "PLAYER 7" },
 ] as const;
 
 export type ServerKind = (typeof PLAYERS)[number]["id"];

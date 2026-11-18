@@ -1,10 +1,12 @@
 import { extractCdnLiveTvM3u8, extractCdnLiveTvMeta } from "./cdnlivetv.js";
 import { extractDaddy3M3u8, extractDaddy3Meta } from "./daddy3.js";
 import { extractDembedStream } from "./dembed.js";
+import { extractEhgembxePlayable } from "./ehgembxe.js";
 import { extractEpiembedsM3u8, extractEpiembedsMeta } from "./epiembeds.js";
 import { buildHubPlayableUrl, decryptHubConfigFromHtml } from "./hub.js";
 import { extractIgniteShipM3u8 } from "./igniteandship.js";
 import { extractLivelive24Meta, extractLivelive24Webm } from "./livelive24.js";
+import { extractMatchoraPlayable } from "./matchora.js";
 import { extractTiestepM3u8, extractTiestepMeta } from "./tiestep.js";
 import { extractWideiptvM3u8, extractWideiptvMeta } from "./wideiptv.js";
 
@@ -15,9 +17,22 @@ export type PlayableResult = {
 };
 
 export function htmlMayContainPlayable(html: string): boolean {
-  return /#EXTM3U|SIGNED_URL|ENCRYPTED_CONFIG|window\._econfig|streamUrl:|var _\w+=\[|var\s+_gr\w+=\[|function \w+\(s\)\{[^}]*atob|<source[^>]+\/webm\/|player\.load\(\{source:|https:\/\/[^"'`\s]+\.m3u8|\/premium\d+\/index\.m3u8|api\/playlist-token\?slug=/.test(
+  return /#EXTM3U|SIGNED_URL|ENCRYPTED_CONFIG|window\._econfig|streamUrl:|var _\w+=\[|var\s+_gr\w+=\[|function \w+\(s\)\{[^}]*atob|<source[^>]+\/webm\/|player\.load\(\{source:|https:\/\/[^"'`\s]+\.m3u8|\/premium\d+\/index\.m3u8|api\/playlist-token\?slug=|matchora|PP\s*=\s*"|tims-\d+\.sytes\.net|ehgembxe/.test(
     html,
   );
+}
+
+export async function extractAsyncPlayable(
+  html: string,
+  embedUrl: string,
+): Promise<PlayableResult | null> {
+  const matchora = await extractMatchoraPlayable(html, embedUrl);
+  if (matchora) return matchora;
+
+  const ehgembxe = await extractEhgembxePlayable(html, embedUrl);
+  if (ehgembxe) return ehgembxe;
+
+  return null;
 }
 
 export function extractPlayableFromHtml(html: string): PlayableResult | null {

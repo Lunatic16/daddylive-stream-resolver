@@ -1,5 +1,6 @@
 import { castServer } from "./cast.js";
 import { castingServer } from "./casting.js";
+import { hubServer } from "./hub.js";
 import { playerServer } from "./player.js";
 import { plusServer } from "./plus.js";
 import { streamServer } from "./stream.js";
@@ -17,6 +18,7 @@ const SERVER_PROFILES: Record<ServerKind, ServerProfile> = {
   plus: plusServer,
   casting: castingServer,
   player: playerServer,
+  hub: hubServer,
 };
 
 export function serverProfile(server: ServerKind): ServerProfile {

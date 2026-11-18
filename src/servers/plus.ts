@@ -4,8 +4,9 @@ export const plusServer: ServerProfile = {
   id: "plus",
   label: "PLAYER 4",
   transport: {
-    refererMode: "optional",
+    refererMode: "required",
+    refererOrigin: "https://ehgembxe.cfd/",
     vlcDirectPlayable: false,
-    mpvDirectPlayable: true,
+    mpvDirectPlayable: false,
   },
 };
